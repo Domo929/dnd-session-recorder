@@ -3,10 +3,8 @@ import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
-import { openai } from '@ai-sdk/openai';
+import { getSummaryModel } from '@/services/aiProviders';
 import { generateText } from 'ai';
-
-const model = openai('gpt-4o');
 
 const updateSummarySchema = z.object({
   summary_text: z.string().min(1, 'Summary text is required'),
@@ -92,9 +90,9 @@ export async function POST(
 
     basePrompt += `\n\nHere's the transcript:\n\n${formattedText}\n\nPlease provide a compelling summary that captures the essence of this D&D session.`;
 
-    // Generate summary with Vercel AI SDK
+    // Generate summary with Vercel AI SDK (provider chosen via AI_SUMMARY_PROVIDER env var)
     const { text: summaryText } = await generateText({
-      model,
+      model: getSummaryModel(),
       prompt: basePrompt
     });
 

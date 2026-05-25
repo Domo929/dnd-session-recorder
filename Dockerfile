@@ -1,10 +1,19 @@
 # Use Node.js LTS Alpine image for minimal size
 FROM node:22-alpine AS base
 
-# Install dependencies needed for ffprobe and other tools
+# Install runtime tools (ffmpeg for audio + sqlite) plus the build tooling
+# needed by the optional `nodejs-whisper` package, which compiles whisper.cpp
+# during `npm ci`. Without these the optional install silently fails and the
+# `whisper-local` transcription provider becomes unavailable inside the image.
+# Drop `build-base cmake git python3` if you only intend to use the
+# OpenAI/Google providers and want a slimmer image.
 RUN apk add --no-cache \
     ffmpeg \
     sqlite \
+    build-base \
+    cmake \
+    git \
+    python3 \
     && rm -rf /var/cache/apk/*
 
 # Set working directory
@@ -46,9 +55,9 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
 
-# Create directories for data persistence
-RUN mkdir -p uploads prisma/data
-RUN chown -R nextjs:nodejs uploads prisma/data
+# Create directories for data persistence (uploads, sqlite, whisper models)
+RUN mkdir -p uploads prisma/data whisper-models
+RUN chown -R nextjs:nodejs uploads prisma/data whisper-models
 
 # Switch to non-root user
 USER nextjs

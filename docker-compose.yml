@@ -10,30 +10,47 @@ services:
     environment:
       # Database
       - DATABASE_URL=file:./prisma/data/dev.db
-      
-      # OpenAI Configuration (Required)
+
+      # AI Provider Selection
+      - AI_TRANSCRIPTION_PROVIDER=${AI_TRANSCRIPTION_PROVIDER:-openai}
+      - AI_SUMMARY_PROVIDER=${AI_SUMMARY_PROVIDER:-openai}
+
+      # OpenAI Configuration (used when *_PROVIDER=openai)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      
+      - OPENAI_SUMMARY_MODEL=${OPENAI_SUMMARY_MODEL:-gpt-4o}
+      - OPENAI_TRANSCRIPTION_MODEL=${OPENAI_TRANSCRIPTION_MODEL:-whisper-1}
+
+      # Google Generative AI Configuration (used when *_PROVIDER=google)
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
+      - GOOGLE_SUMMARY_MODEL=${GOOGLE_SUMMARY_MODEL:-gemini-2.5-flash}
+      - GOOGLE_TRANSCRIPTION_MODEL=${GOOGLE_TRANSCRIPTION_MODEL:-gemini-2.5-flash}
+
+      # Local Whisper (whisper.cpp) Configuration (used when AI_TRANSCRIPTION_PROVIDER=whisper-local)
+      - WHISPER_MODEL=${WHISPER_MODEL:-base.en}
+      - WHISPER_MODELS_DIR=${WHISPER_MODELS_DIR:-/app/whisper-models}
+      - WHISPER_USE_CUDA=${WHISPER_USE_CUDA:-false}
+
       # NextAuth Configuration (Required)
       - NEXTAUTH_URL=${NEXTAUTH_URL}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      
+
       # Google OAuth Configuration (Optional)
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - NEXT_PUBLIC_GOOGLE_ENABLED=${NEXT_PUBLIC_GOOGLE_ENABLED}
-      
+
       # File Upload Configuration
       - UPLOAD_DIR=./uploads
       - MAX_FILE_SIZE=${MAX_FILE_SIZE}
       - CORS_ORIGIN=${CORS_ORIGIN}
-      
+
       # Node Environment
       - NODE_ENV=production
     volumes:
-      # Persist database and uploads
+      # Persist database, uploads, and downloaded whisper models
       - ./data/database:/app/prisma/data
       - ./data/uploads:/app/uploads
+      - ./data/whisper-models:/app/whisper-models
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]

@@ -5,7 +5,10 @@ This guide explains how to deploy the D&D Session Recorder using Docker and Dock
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- OpenAI API key
+- An API key for at least one supported AI provider:
+  - **OpenAI** (`OPENAI_API_KEY`) — default
+  - **Google Gemini** (`GOOGLE_GENERATIVE_AI_API_KEY`) — alternative
+  - The `whisper-local` transcription option runs inside the container and needs no API key, but you'll still want a summary provider key.
 - (Optional) Google OAuth credentials
 
 ## Quick Start
@@ -25,8 +28,9 @@ This guide explains how to deploy the D&D Session Recorder using Docker and Dock
 
 3. **Create data directories**:
    ```bash
-   mkdir -p data/database data/uploads
+   mkdir -p data/database data/uploads data/whisper-models
    ```
+   The `whisper-models` directory is only used when `AI_TRANSCRIPTION_PROVIDER=whisper-local`, but creating it upfront avoids permission issues later.
 
 4. **Start the application**:
    ```bash
@@ -46,7 +50,7 @@ This guide explains how to deploy the D&D Session Recorder using Docker and Dock
 ### Required Variables
 
 ```bash
-# OpenAI API Key (Required)
+# OpenAI API Key (required when either AI_*_PROVIDER is "openai", which is the default)
 OPENAI_API_KEY=your-openai-api-key
 
 # NextAuth Configuration (Required)
@@ -68,6 +72,33 @@ MAX_FILE_SIZE=100000000  # 100MB
 # CORS Configuration
 CORS_ORIGIN=http://localhost:3000
 ```
+
+### AI Provider Selection
+
+Transcription and summary providers are independent. Defaults preserve the original OpenAI-only behavior.
+
+| Step | Env var | Allowed values | Default |
+|---|---|---|---|
+| Transcription | `AI_TRANSCRIPTION_PROVIDER` | `openai`, `google`, `whisper-local` | `openai` |
+| Summary | `AI_SUMMARY_PROVIDER` | `openai`, `google` | `openai` |
+
+Provider-specific knobs:
+
+```bash
+# Gemini (set AI_*_PROVIDER=google to use)
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-ai-studio-key
+GOOGLE_TRANSCRIPTION_MODEL=gemini-2.5-flash
+GOOGLE_SUMMARY_MODEL=gemini-2.5-flash
+
+# Local whisper.cpp (set AI_TRANSCRIPTION_PROVIDER=whisper-local to use)
+WHISPER_MODEL=base.en           # tiny.en | base.en | small.en | medium.en | large-v3 | large-v3-turbo
+WHISPER_MODELS_DIR=/app/whisper-models
+WHISPER_USE_CUDA=false
+```
+
+The shipped `Dockerfile` already installs the toolchain (`build-base`, `cmake`, `git`, `python3`) needed by `nodejs-whisper` to compile whisper.cpp during the image build. If you'll never use `whisper-local`, you can remove those packages from the Dockerfile to slim the image.
+
+Model files for the local provider are written to `/app/whisper-models` inside the container, which is bind-mounted to `./data/whisper-models` on the host so downloads survive container rebuilds.
 
 ## Production Deployment
 
@@ -181,6 +212,7 @@ The application uses Docker volumes for data persistence:
 
 - **Database**: `./data/database` → `/app/prisma/data`
 - **Uploads**: `./data/uploads` → `/app/uploads`
+- **Whisper models** (only used when `AI_TRANSCRIPTION_PROVIDER=whisper-local`): `./data/whisper-models` → `/app/whisper-models`
 
 ### Backup Data
 
