@@ -43,7 +43,10 @@ export class GoogleTranscriptionService implements TranscriptionService {
                   type: 'text',
                   text:
                     'Transcribe the following audio verbatim. Preserve sentence boundaries and natural punctuation. ' +
-                    'Output only the transcript text with no commentary, no timestamps, and no speaker labels.',
+                    'When multiple distinct voices are present, prefix each speaker turn with a label like ' +
+                    '"Speaker 1:", "Speaker 2:", etc. — use consistent labels for the same speaker across the chunk. ' +
+                    'If you cannot reliably distinguish speakers, omit labels rather than guess. ' +
+                    'Output only the transcript text with no commentary and no timestamps.',
                 },
                 {
                   type: 'file',

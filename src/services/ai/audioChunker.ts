@@ -37,7 +37,6 @@ export async function splitAudioBySize(
   const numChunks = Math.ceil(totalSize / chunkSize);
 
   if (numChunks <= 1) {
-    console.log(`[Audio Split] File is under ${chunkSizeMB}MB, no split needed.`);
     return [inputPath];
   }
 
