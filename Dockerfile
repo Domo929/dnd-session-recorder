@@ -68,4 +68,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
 # Apply pending Prisma migrations on every boot (idempotent), then start the server.
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+# Invoke prisma directly via node — `npx prisma` requires the .bin/prisma
+# symlink, which isn't present in the runner stage because Next.js standalone
+# only traces runtime deps (not the prisma CLI). Without this, the container
+# exits with code 127 on Azure App Service.
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
