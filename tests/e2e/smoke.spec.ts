@@ -95,3 +95,78 @@ test('full upload → transcribe → summarize flow against the Docker image', a
   expect(created, 'session was created').toBeTruthy();
   expect(['completed', 'summarizing', 'transcribed']).toContain(created.status);
 });
+
+/**
+ * Auth gating: every protected API route must reject unauthenticated
+ * callers with 401, and every protected page must redirect them to the
+ * sign-in screen. This guards against regressions of the audit fixed
+ * in this PR — previously you could POST to /api/transcription/[id]
+ * with no cookie and trigger a real Gemini call.
+ *
+ * We use a random UUID for `sessionId` everywhere: the auth check must
+ * fire BEFORE the route looks the resource up, so the response is the
+ * same whether the id exists or not. This is deliberate so the test
+ * doesn't depend on state from the previous test.
+ */
+test('unauthenticated requests are rejected by protected routes', async ({
+  page,
+  context,
+}) => {
+  // Burn any cookies the previous test might have set in this worker so
+  // the API/browser context starts genuinely unauthenticated.
+  await context.clearCookies();
+
+  const api = await playwrightRequest.newContext({ baseURL: BASE_URL });
+  const fakeSessionId = '00000000-0000-0000-0000-000000000000';
+
+  // --- API routes that should require auth ---------------------------
+  // For POST routes we send `{}` as the body to mirror the real client.
+  type Check = { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string };
+  const checks: Check[] = [
+    { method: 'POST', path: `/api/transcription/${fakeSessionId}` },
+    { method: 'GET', path: `/api/transcription/${fakeSessionId}` },
+    { method: 'POST', path: `/api/summary/${fakeSessionId}` },
+    { method: 'GET', path: `/api/summary/${fakeSessionId}` },
+    { method: 'GET', path: `/api/sessions/${fakeSessionId}` },
+    { method: 'PATCH', path: `/api/sessions/${fakeSessionId}` },
+    { method: 'DELETE', path: `/api/sessions/${fakeSessionId}` },
+    { method: 'POST', path: `/api/sessions/${fakeSessionId}/upload` },
+    { method: 'POST', path: '/api/campaigns' },
+    { method: 'POST', path: '/api/uploads' },
+  ];
+
+  for (const { method, path } of checks) {
+    const resp = await api.fetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      data: '{}',
+    });
+    expect(
+      resp.status(),
+      `${method} ${path} must return 401 for unauthenticated callers`,
+    ).toBe(401);
+  }
+
+  // --- Page routes that should redirect unauth users to /auth/signin -
+  const protectedPages = [
+    '/sessions',
+    '/sessions/upload',
+    `/sessions/${fakeSessionId}`,
+    `/sessions/${fakeSessionId}/transcript`,
+    `/sessions/${fakeSessionId}/summary`,
+    '/campaigns',
+    `/campaigns/${fakeSessionId}`,
+  ];
+
+  for (const path of protectedPages) {
+    await page.goto(path);
+    // NextAuth's withAuth bounces unauth requests through /api/auth/signin
+    // which then renders our configured pages.signIn = '/auth/signin'.
+    // Either landing URL is acceptable; we just need to assert we did NOT
+    // end up on the protected page.
+    await expect.poll(() => page.url(), {
+      message: `Expected unauth visit to ${path} to redirect to sign-in`,
+      timeout: 10_000,
+    }).toMatch(/\/auth\/signin|\/api\/auth\/signin/);
+  }
+});
