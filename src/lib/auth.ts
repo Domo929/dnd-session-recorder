@@ -51,36 +51,45 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   session: {
-    strategy: 'database',
+    // CredentialsProvider requires the JWT strategy. Using `database`
+    // strategy alongside CredentialsProvider triggers a NextAuth
+    // `Configuration` error at sign-in time.
+    strategy: 'jwt',
   },
   pages: {
     signIn: '/auth/signin',
     error: '/auth/error',
   },
   callbacks: {
-    async signIn({ user, account, profile, email, credentials }) {
+    async signIn({ user, account, profile }) {
       try {
         console.log('SignIn callback - User:', user);
         console.log('SignIn callback - Account:', account);
         console.log('SignIn callback - Profile:', profile);
-        
+
         if (account?.provider === 'google') {
           console.log('Google OAuth sign in attempt');
-          // Add any custom Google OAuth validation here
           return true;
         }
-        
+
         return true;
       } catch (error) {
         console.error('SignIn callback error:', error);
         return false;
       }
     },
-    async session({ session, user }) {
+    async jwt({ token, user }) {
+      // On initial sign-in `user` is populated; persist the DB id onto the
+      // token so the session callback can expose it.
+      if (user) {
+        token.id = user.id;
+      }
+      return token;
+    },
+    async session({ session, token }) {
       try {
-        // When using database sessions, user object is available
-        if (user) {
-          session.user.id = user.id;
+        if (token?.id && session.user) {
+          session.user.id = token.id as string;
         }
         return session;
       } catch (error) {

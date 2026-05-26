@@ -161,14 +161,11 @@ export default function SessionDetailPage() {
 
   // Transcription mutation
   const transcribeMutation = useMutation({
-    mutationFn: async ({ upload }: { upload?: Upload } = {}) => {
+    mutationFn: async () => {
       const response = await fetch(`/api/transcription/${sessionId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          // Don't pass audioFilePath - let the server figure it out from the session
-          ...(upload && { audioFilePath: upload.path || upload.filename })
-        }),
+        body: JSON.stringify({}),
       });
 
       if (!response.ok) {
@@ -328,7 +325,7 @@ export default function SessionDetailPage() {
 
       // Step 3: Generate transcription
       setProcessingStep('transcribe');
-      await transcribeMutation.mutateAsync({ upload });
+      await transcribeMutation.mutateAsync();
 
       // Step 4: Generate summary
       setProcessingStep('summarize');
@@ -356,7 +353,7 @@ export default function SessionDetailPage() {
     try {
       // Step 1: Generate transcription
       setProcessingStep('transcribe');
-      await transcribeMutation.mutateAsync({});
+      await transcribeMutation.mutateAsync();
 
       // Step 2: Generate summary
       setProcessingStep('summarize');

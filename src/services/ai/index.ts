@@ -10,6 +10,7 @@ import {
 import { OpenAISummaryService, OpenAITranscriptionService } from './openai';
 import { GoogleSummaryService, GoogleTranscriptionService } from './google';
 import { LocalWhisperTranscriptionService } from './whisperLocal';
+import { MockSummaryService, MockTranscriptionService } from './mock';
 
 export type {
   SummaryProvider,
@@ -23,13 +24,19 @@ export { LocalWhisperTranscriptionService } from './whisperLocal';
 
 function readTranscriptionProvider(): TranscriptionProvider {
   const value = (process.env.AI_TRANSCRIPTION_PROVIDER ?? '').toLowerCase().trim();
-  if (value === 'google' || value === 'openai' || value === 'whisper-local') return value;
+  if (
+    value === 'google' ||
+    value === 'openai' ||
+    value === 'whisper-local' ||
+    value === 'mock'
+  )
+    return value;
   return DEFAULT_TRANSCRIPTION_PROVIDER;
 }
 
 function readSummaryProvider(): SummaryProvider {
   const value = (process.env.AI_SUMMARY_PROVIDER ?? '').toLowerCase().trim();
-  if (value === 'google' || value === 'openai') return value;
+  if (value === 'google' || value === 'openai' || value === 'mock') return value;
   return DEFAULT_SUMMARY_PROVIDER;
 }
 
@@ -45,6 +52,8 @@ export function getTranscriptionService(): TranscriptionService {
       return new GoogleTranscriptionService();
     case 'whisper-local':
       return new LocalWhisperTranscriptionService();
+    case 'mock':
+      return new MockTranscriptionService();
     case 'openai':
     default:
       return new OpenAITranscriptionService();
@@ -59,6 +68,8 @@ export function getSummaryService(): SummaryService {
   switch (provider) {
     case 'google':
       return new GoogleSummaryService();
+    case 'mock':
+      return new MockSummaryService();
     case 'openai':
     default:
       return new OpenAISummaryService();
