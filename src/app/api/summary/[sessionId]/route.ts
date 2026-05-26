@@ -73,27 +73,43 @@ export async function POST(
     // Format transcriptions for summarization
     const formattedText = formatTranscriptionsForSummary(transcriptions);
 
-    // Build the prompt with optional campaign context
-    let basePrompt = `You are a skilled storyteller and D&D campaign chronicler. Below is a transcript of a D&D session. Please create an engaging summary that:
+    // Build the prompt with optional campaign context.
+    //
+    // We split into `system` (rules the model must follow) and `prompt`
+    // (the transcript to summarize). This gives the system rules more
+    // weight than putting them inline with the transcript, and lets us
+    // be explicit about what NOT to do — without those guardrails Gemini
+    // in particular will happily ask the user follow-up questions
+    // ("Could you please provide the names of your four adventurers?")
+    // instead of just summarizing what's in the transcript.
+    const systemRules = [
+      'You are a D&D session chronicler. Your sole job is to produce a written summary of the transcript you are given.',
+      '',
+      'Hard rules — follow ALL of these:',
+      '- Output ONLY the summary itself. No preamble, no greeting, no sign-off, no meta commentary.',
+      '- Do NOT ask the user any questions. Do NOT request clarification or additional information.',
+      '- Do NOT mention that information is missing, ambiguous, or that you "need" anything.',
+      '- Use ONLY facts present in the transcript. Do not invent character names, places, items, or events.',
+      '- If a character is unnamed in the transcript, refer to them by role, class, or description (e.g. "the rogue", "the fourth adventurer") instead of inventing a name or asking for one.',
+      '- If the transcript is short or sparse, write a correspondingly short summary. A two-sentence summary of a two-sentence transcript is correct.',
+      '',
+      'Summary should cover (only when present in the transcript):',
+      '- The story arc of the session — what happened, in order.',
+      '- Key events, decisions, and character moments.',
+      '- Which characters were involved in important scenes.',
+      '- Combat highlights and character development.',
+      '- The narrative tone and feel of the session.',
+    ].join('\n');
 
-1. Tells the story of what happened in this session
-2. Identifies key events, decisions, and character moments
-3. Mentions which characters were involved in important scenes
-4. Maintains the narrative flow and excitement of the session
-5. Uses the character names provided
-6. Focuses on story elements, combat highlights, and character development`;
-
-    // Add campaign-specific context if available
-    if (campaign.systemPrompt) {
-      basePrompt += `\n\nCampaign Context:\n${campaign.systemPrompt}`;
-    }
-
-    basePrompt += `\n\nHere's the transcript:\n\n${formattedText}\n\nPlease provide a compelling summary that captures the essence of this D&D session.`;
+    const systemPromptCombined = campaign.systemPrompt
+      ? `${systemRules}\n\nAdditional campaign context (use as background; it does not override the rules above):\n${campaign.systemPrompt}`
+      : systemRules;
 
     // Generate summary with Vercel AI SDK (provider chosen via AI_SUMMARY_PROVIDER env var)
     const { text: summaryText } = await generateText({
       model: getSummaryModel(),
-      prompt: basePrompt
+      system: systemPromptCombined,
+      prompt: `Transcript:\n\n${formattedText}\n\nWrite the summary now.`,
     });
 
     // Save summary to database
