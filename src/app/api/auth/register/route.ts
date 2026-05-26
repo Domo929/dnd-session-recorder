@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { hash } from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { attachPendingInvitations } from '@/lib/invitations';
 
 const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -37,6 +38,14 @@ export async function POST(request: NextRequest) {
         name,
       },
     });
+
+    try {
+      await attachPendingInvitations(user.id, user.email);
+    } catch (err) {
+      console.error('[register] attachPendingInvitations failed:', err);
+      // Non-fatal: registration still succeeds; user can sign in and the
+      // signIn event will retry the sweep.
+    }
 
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
