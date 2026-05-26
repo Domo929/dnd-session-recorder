@@ -1,7 +1,7 @@
 # Use Node.js LTS Alpine image for minimal size
 FROM node:22-alpine AS base
 
-# Install runtime tools (ffmpeg for audio + sqlite) plus the build tooling
+# Install runtime tools (ffmpeg for audio) plus the build tooling
 # needed by the optional `nodejs-whisper` package, which compiles whisper.cpp
 # during `npm ci`. Without these the optional install silently fails and the
 # `whisper-local` transcription provider becomes unavailable inside the image.
@@ -9,7 +9,6 @@ FROM node:22-alpine AS base
 # OpenAI/Google providers and want a slimmer image.
 RUN apk add --no-cache \
     ffmpeg \
-    sqlite \
     build-base \
     cmake \
     git \
@@ -44,23 +43,22 @@ WORKDIR /app
 ENV NODE_ENV production
 ENV PORT 3000
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
 # Copy necessary files
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
-# Create directories for data persistence (uploads, sqlite, whisper models)
-RUN mkdir -p uploads prisma/data whisper-models
-RUN chown -R nextjs:nodejs uploads prisma/data whisper-models
+# Create directories for uploads + whisper models (mounted as volumes in production)
+RUN mkdir -p uploads whisper-models
 
-# Switch to non-root user
-USER nextjs
+# NOTE: Container runs as root. Local docker isolation is fine for dev,
+# and managed hosts (Azure App Service, etc.) provide their own user/UID
+# remapping plus volume permission handling. Adding a USER directive here
+# breaks /home and /var/* persistent mounts on App Service.
 
 # Expose port
 EXPOSE 3000
@@ -69,5 +67,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Start the application
-CMD ["node", "server.js"]
+# Apply pending Prisma migrations on every boot (idempotent), then start the server.
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
