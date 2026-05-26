@@ -7,8 +7,8 @@ An AI-powered web application for recording, transcribing, and summarizing Dunge
 ### Current Capabilities
 
 - **🎙️ Audio Recording & Upload**: Support for various audio formats with automatic processing
-- **🤖 AI Transcription**: Powered by OpenAI Whisper for accurate speech-to-text conversion
-- **📋 Intelligent Summaries**: GPT-4 generates comprehensive session summaries with key events
+- **🤖 AI Transcription**: Pluggable — choose OpenAI Whisper (default), Google Gemini, or fully-local whisper.cpp
+- **📋 Intelligent Summaries**: Pluggable — choose OpenAI GPT-4o (default) or Google Gemini
 - **👥 User Authentication**: Secure login with Google OAuth and local credentials
 - **📚 Campaign Management**: Create, organize, and manage multiple D&D campaigns
 - **🎮 Session Organization**: Track sessions by campaign with date and duration
@@ -23,7 +23,7 @@ An AI-powered web application for recording, transcribing, and summarizing Dunge
 - **Backend**: Next.js API Routes with serverless functions
 - **Database**: PostgreSQL with Prisma ORM (SQLite supported on the upstream branch only)
 - **Authentication**: NextAuth.js with Google OAuth and local credentials
-- **AI Services**: OpenAI API (Whisper for transcription, GPT-4 for summaries)
+- **AI Services**: Pluggable provider layer — OpenAI (Whisper + GPT-4o), Google Gemini, and/or local whisper.cpp via `nodejs-whisper`
 - **File Processing**: FFmpeg for audio processing and metadata extraction
 - **UI Components**: Lucide React icons, custom Tailwind components
 - **State Management**: TanStack Query for server state management
@@ -55,8 +55,13 @@ The application uses a well-structured database with the following key entities:
 ### Prerequisites
 
 - Node.js 18+ and npm
-- OpenAI API key
+- `ffmpeg` on `PATH` (required for audio chunking and for the local whisper provider)
+- An API key for whichever cloud AI provider you choose:
+  - **OpenAI** (default): `OPENAI_API_KEY`
+  - **Google Gemini**: `GOOGLE_GENERATIVE_AI_API_KEY` (get one from [Google AI Studio](https://aistudio.google.com/apikey))
+  - Neither is required if you use `whisper-local` for transcription **and** keep the summary disabled — but at least one summary provider key is needed to generate summaries.
 - Google OAuth credentials (optional, for Google login)
+- Build tools (`build-essential`/`make`, `cmake`, `git`, `python3`) — **only** if you want the optional local-whisper provider. Without them, `nodejs-whisper` skips compiling and the `whisper-local` option is unavailable, but everything else still installs cleanly.
 
 ### Installation
 
@@ -104,13 +109,13 @@ The application uses a well-structured database with the following key entities:
 
 ### Environment Variables
 
-Create a `.env.local` file in the project root with the following variables:
+Create a `.env.local` file in the project root. See `env.example` for the full, commented list. Minimum to run with the default OpenAI setup:
 
 ```bash
 # Database (PostgreSQL — see "Start PostgreSQL" step above)
 DATABASE_URL="postgresql://dndrec:devpassword@localhost:5432/dndrec"
 
-# OpenAI Configuration (Required)
+# OpenAI Configuration (default provider for transcription + summary)
 OPENAI_API_KEY="your-openai-api-key"
 
 # NextAuth Configuration (Required)
@@ -126,6 +131,51 @@ NEXT_PUBLIC_GOOGLE_ENABLED="true"
 UPLOAD_DIR="./uploads"
 MAX_FILE_SIZE="100000000"
 CORS_ORIGIN="http://localhost:3000"
+```
+
+### Choosing an AI provider
+
+Transcription and summarization are independently configurable. The defaults preserve the original OpenAI behavior — existing deployments need no changes.
+
+| Step | Env var | Allowed values | Default | Extra requirements |
+|---|---|---|---|---|
+| Transcription | `AI_TRANSCRIPTION_PROVIDER` | `openai`, `google`, `whisper-local` | `openai` | See per-provider notes below |
+| Summary | `AI_SUMMARY_PROVIDER` | `openai`, `google` | `openai` | API key for the chosen provider |
+
+Per-provider configuration:
+
+**OpenAI** (`openai`) — uses Whisper for transcription, GPT-4o for summaries.
+- Requires `OPENAI_API_KEY`.
+- Optional: `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`), `OPENAI_SUMMARY_MODEL` (default `gpt-4o`).
+
+**Google Gemini** (`google`) — uses `gemini-2.5-flash` for both transcription and summaries.
+- Requires `GOOGLE_GENERATIVE_AI_API_KEY`.
+- Optional: `GOOGLE_TRANSCRIPTION_MODEL`, `GOOGLE_SUMMARY_MODEL`.
+- Gemini accepts audio as multimodal input; files over ~18 MB are automatically split with ffmpeg into inline-sized chunks. (For very long sessions you may want to use `whisper-local` instead, which handles arbitrary length natively.)
+
+**Local whisper.cpp** (`whisper-local`, transcription only) — runs entirely on your machine, no API key, no data leaves the host.
+- Requires the optional `nodejs-whisper` package to have built successfully (`build-essential`, `cmake` >= 3.18, `git`, `python3` on Linux; Xcode CLT on macOS).
+- One-time setup: `npx nodejs-whisper download` — compiles whisper.cpp (~1–3 min on CPU, longer with CUDA) and prompts you to pick a model. Files land in `node_modules/nodejs-whisper/cpp/whisper.cpp/models/`.
+- Optional: `WHISPER_MODEL` (default `base.en`; other choices include `tiny.en`, `small.en`, `medium.en`, `large-v3`, `large-v3-turbo`), `WHISPER_MODELS_DIR` (override the model location — unset means use nodejs-whisper's bundled default), `WHISPER_USE_CUDA=true` if you have a CUDA GPU and the CUDA Toolkit installed.
+
+Example combinations:
+
+```bash
+# Cheapest cloud setup: Gemini for everything
+AI_TRANSCRIPTION_PROVIDER=google
+AI_SUMMARY_PROVIDER=google
+GOOGLE_GENERATIVE_AI_API_KEY=...
+
+# Fully local transcription + cloud summary
+AI_TRANSCRIPTION_PROVIDER=whisper-local
+WHISPER_MODEL=base.en
+AI_SUMMARY_PROVIDER=google
+GOOGLE_GENERATIVE_AI_API_KEY=...
+
+# Original behavior (no .env changes needed)
+# AI_TRANSCRIPTION_PROVIDER=openai
+# AI_SUMMARY_PROVIDER=openai
+OPENAI_API_KEY=...
 ```
 
 ### Production Deployment

@@ -1,9 +1,18 @@
 # Use Node.js LTS Alpine image for minimal size
 FROM node:22-alpine AS base
 
-# Runtime tools: ffmpeg for audio processing
+# Install runtime tools (ffmpeg for audio) plus the build tooling
+# needed by the optional `nodejs-whisper` package, which compiles whisper.cpp
+# during `npm ci`. Without these the optional install silently fails and the
+# `whisper-local` transcription provider becomes unavailable inside the image.
+# Drop `build-base cmake git python3` if you only intend to use the
+# OpenAI/Google providers and want a slimmer image.
 RUN apk add --no-cache \
     ffmpeg \
+    build-base \
+    cmake \
+    git \
+    python3 \
     && rm -rf /var/cache/apk/*
 
 # Set working directory
@@ -43,8 +52,8 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
-# Create directory for uploads (mounted as volume in production)
-RUN mkdir -p uploads
+# Create directories for uploads + whisper models (mounted as volumes in production)
+RUN mkdir -p uploads whisper-models
 
 # NOTE: Container runs as root. Local docker isolation is fine for dev,
 # and managed hosts (Azure App Service, etc.) provide their own user/UID

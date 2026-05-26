@@ -1,67 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
-import { experimental_transcribe as transcribe } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { transcribeAudio } from '@/services/ai';
 import fs from 'fs';
 import path from 'path';
-import ffmpeg from 'fluent-ffmpeg';
-
-// Helper to split audio into 24MB chunks
-async function splitAudioBySize(inputPath: string, chunkSizeMB = 24): Promise<string[]> {
-  const stats = fs.statSync(inputPath);
-  const totalSize = stats.size;
-  const chunkSize = chunkSizeMB * 1024 * 1024;
-  const numChunks = Math.ceil(totalSize / chunkSize);
-  const ext = path.extname(inputPath);
-  const base = path.basename(inputPath, ext);
-  const dir = path.dirname(inputPath);
-  const chunkPaths: string[] = [];
-
-  if (numChunks === 1) {
-    console.log(`[Audio Split] File is under ${chunkSizeMB}MB, no split needed.`);
-    return [inputPath];
-  }
-
-  // Get duration of the audio
-  const getDuration = () => new Promise<number>((resolve, reject) => {
-    ffmpeg.ffprobe(inputPath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata.format.duration || 0);
-    });
-  });
-  
-  const duration = await getDuration();
-  const chunkDuration = duration / numChunks;
-
-  console.log(`[Audio Split] Splitting ${inputPath} into ${numChunks} chunks of ~${chunkSizeMB}MB each (~${chunkDuration.toFixed(2)}s per chunk)`);
-
-  const splitPromises: Promise<void>[] = [];
-  for (let i = 0; i < numChunks; i++) {
-    const start = i * chunkDuration;
-    const output = path.join(dir, `${base}_chunk${i}${ext}`);
-    chunkPaths.push(output);
-    
-    splitPromises.push(new Promise<void>((resolve, reject) => {
-      ffmpeg(inputPath)
-        .setStartTime(start)
-        .setDuration(chunkDuration)
-        .output(output)
-        .on('end', () => {
-          console.log(`[Audio Split] Created chunk: ${output}`);
-          resolve();
-        })
-        .on('error', (err) => {
-          console.error(`[Audio Split] Error creating chunk ${output}:`, err);
-          reject(err);
-        })
-        .run();
-    }));
-  }
-  
-  await Promise.all(splitPromises);
-  return chunkPaths;
-}
 
 // Helper to update session status
 async function updateSessionStatus(sessionId: string, status: string, errorStep?: string, errorMessage?: string): Promise<void> {
@@ -128,42 +70,9 @@ export async function POST(
     console.log(`[Transcription] Starting transcription for session ${sessionId}`);
     await updateSessionStatus(sessionId, 'transcribing');
 
-    // Split audio into 24MB chunks
-    const chunkPaths = await splitAudioBySize(fullPath, 18);
-    console.log(`[Transcription] Audio split into ${chunkPaths.length} chunk(s)`);
-
-    const allText: string[] = [];
-    
-    for (let i = 0; i < chunkPaths.length; i++) {
-      const chunkPath = chunkPaths[i];
-      console.log(`[Transcription] Transcribing chunk ${i + 1}/${chunkPaths.length}: ${chunkPath}`);
-      
-      // Read the file buffer for AI SDK
-      const fileBuffer = fs.readFileSync(chunkPath);
-      
-      const transcription = await transcribe({
-        model: openai.transcription('whisper-1'),
-        audio: fileBuffer,
-      });
-
-      if (!transcription.text) {
-        throw new Error(`No transcription text received for chunk ${i + 1}`);
-      }
-
-      allText.push(transcription.text);
-      console.log(`[Transcription] Chunk ${i + 1} transcribed.`);
-    }
-
-    // Clean up chunk files (except original)
-    chunkPaths.forEach(p => {
-      if (p !== fullPath && fs.existsSync(p)) {
-        fs.unlinkSync(p);
-      }
-    });
-    console.log(`[Transcription] All chunks transcribed and cleaned up.`);
-
-    // Combine all text chunks into a single transcription
-    const fullText = allText.join(' ');
+    // Dispatch to the configured transcription provider
+    // (AI_TRANSCRIPTION_PROVIDER env var: openai | google | whisper-local)
+    const fullText = await transcribeAudio(fullPath);
 
     // Save transcription to database
     await db.saveTranscription(sessionId, fullText);
@@ -174,7 +83,7 @@ export async function POST(
     
     // Update upload status to transcribed if session has an upload
     if (session.uploadId) {
-      await db.updateUploadStatus(session.uploadId, 'transcribed', chunkPaths);
+      await db.updateUploadStatus(session.uploadId, 'transcribed');
     }
 
     // Clean up files after transcription is complete
