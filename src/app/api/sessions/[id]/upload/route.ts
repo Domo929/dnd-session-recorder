@@ -89,10 +89,11 @@ export async function POST(
 // PUT /api/sessions/[id]/upload - Replace session's upload
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
+    const sessionId = (await params).id;
     
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -105,7 +106,7 @@ export async function PUT(
     const validatedData = linkUploadSchema.parse(body);
     
     // Verify session exists and belongs to user
-    const gamingSession = await db.getSessionById(params.id);
+    const gamingSession = await db.getSessionById(sessionId);
     if (!gamingSession) {
       return NextResponse.json(
         { error: 'Session not found' },
@@ -140,7 +141,7 @@ export async function PUT(
     }
     
     // Replace upload
-    const updatedSession = await db.linkSessionToUpload(params.id, validatedData.upload_id);
+    const updatedSession = await db.linkSessionToUpload(sessionId, validatedData.upload_id);
     
     return NextResponse.json({
       message: 'Upload replaced successfully',
@@ -166,10 +167,11 @@ export async function PUT(
 // DELETE /api/sessions/[id]/upload - Unlink upload from session
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
+    const sessionId = (await params).id;
     
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -179,7 +181,7 @@ export async function DELETE(
     }
     
     // Verify session exists and belongs to user
-    const gamingSession = await db.getSessionById(params.id);
+    const gamingSession = await db.getSessionById(sessionId);
     if (!gamingSession) {
       return NextResponse.json(
         { error: 'Session not found' },
@@ -205,7 +207,7 @@ export async function DELETE(
     }
     
     // Unlink upload from session
-    const updatedSession = await db.unlinkSessionFromUpload(params.id);
+    const updatedSession = await db.unlinkSessionFromUpload(sessionId);
     
     return NextResponse.json({
       message: 'Upload unlinked from session successfully',
