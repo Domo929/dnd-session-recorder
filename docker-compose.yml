@@ -1,15 +1,35 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dndrec
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: dndrec
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dndrec"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   dnd-recorder:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       # Database
-      - DATABASE_URL=file:./prisma/data/dev.db
+      - DATABASE_URL=postgresql://dndrec:devpassword@postgres:5432/dndrec
       
       # OpenAI Configuration (Required)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -31,8 +51,7 @@ services:
       # Node Environment
       - NODE_ENV=production
     volumes:
-      # Persist database and uploads
-      - ./data/database:/app/prisma/data
+      # Persist uploads (postgres has its own volume above)
       - ./data/uploads:/app/uploads
     restart: unless-stopped
     healthcheck:
@@ -43,7 +62,7 @@ services:
       start_period: 40s
 
 volumes:
-  database:
+  postgres:
     driver: local
   uploads:
     driver: local
