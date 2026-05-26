@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
-import { transcribeAudio } from '@/services/aiProviders';
+import { transcribeAudio } from '@/services/ai';
 import fs from 'fs';
 import path from 'path';
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
-import { getSummaryModel } from '@/services/aiProviders';
+import { getSummaryModel } from '@/services/ai';
 import { generateText } from 'ai';
 
 const updateSummarySchema = z.object({
