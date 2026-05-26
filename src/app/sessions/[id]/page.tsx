@@ -30,6 +30,7 @@ interface Session {
   errorMessage: string | null;
   uploadId: string | null;
   audioFilePath: string | null;
+  campaignId: string;
   campaign: {
     name: string;
   };
@@ -85,6 +86,18 @@ export default function SessionDetailPage() {
       return response.json();
     },
   });
+
+  const { data: campaign } = useQuery<{ role: 'owner' | 'player' }>({
+    queryKey: ['campaign-role', session?.campaignId],
+    queryFn: async () => {
+      const response = await fetch(`/api/campaigns/${session!.campaignId}`);
+      if (!response.ok) throw new Error('Failed to fetch campaign');
+      return response.json();
+    },
+    enabled: !!session?.campaignId,
+  });
+
+  const isOwner = campaign?.role === 'owner';
 
   const { data: transcriptions, isLoading: transcriptionsLoading } = useQuery<Transcription[]>({
     queryKey: ['transcriptions', sessionId],
@@ -479,6 +492,12 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
+      {!isOwner && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg p-3 text-sm">
+          You&apos;re viewing this session as a player. Only the campaign owner can transcribe, summarise, or edit.
+        </div>
+      )}
+
       {/* Session Info */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -539,7 +558,7 @@ export default function SessionDetailPage() {
                 <p className="text-sm text-gray-600">Linked audio file for this session</p>
               </div>
             </div>
-            {(session.status === 'uploaded' || session.status === 'error') && !processingStep && (
+            {isOwner && (session.status === 'uploaded' || session.status === 'error') && !processingStep && (
               <Button
                 onClick={handleRetranscribe}
                 className="flex items-center space-x-2"
@@ -586,7 +605,7 @@ export default function SessionDetailPage() {
       )}
 
       {/* Audio Upload Section - Show for draft sessions without audio */}
-      {session.status === 'draft' && !session.upload && !processingStep && (
+      {isOwner && session.status === 'draft' && !session.upload && !processingStep && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center space-x-3 mb-4">
             <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -853,7 +872,7 @@ export default function SessionDetailPage() {
                 </span>
               )}
               {/* Summary Actions */}
-              {session && transcriptions && transcriptions.length > 0 && !processingStep && (
+              {isOwner && session && transcriptions && transcriptions.length > 0 && !processingStep && (
                 <div className="flex items-center space-x-2">
                   <Button
                     variant="outline"
@@ -956,7 +975,7 @@ export default function SessionDetailPage() {
             <div className="text-center py-8">
               <Sparkles className="h-12 w-12 text-gray-400 mx-auto mb-3" />
               <p className="text-gray-500">No summary available</p>
-              {session && transcriptions && transcriptions.length > 0 && !processingStep && (
+              {isOwner && session && transcriptions && transcriptions.length > 0 && !processingStep && (
                 <Button
                   onClick={handleRegenerateSummary}
                   disabled={summarizeMutation.isPending}

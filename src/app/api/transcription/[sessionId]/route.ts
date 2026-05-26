@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 import { fileCleanup } from '@/services/fileCleanup';
 import { transcribeAudio } from '@/services/ai';
 import fs from 'fs';
@@ -28,29 +27,19 @@ export async function POST(
 ) {
   const { sessionId } = await params;
 
-  // Auth gate must run BEFORE we touch the DB or any AI service. We do not
-  // accept any body params — the upload's absolute path on disk is the
-  // single source of truth for which file to transcribe. (Previously the
-  // route accepted `audioFilePath` from the request body, which both
-  // double-dipped with `session.upload.path` and was a path-traversal risk
-  // for anyone who could call this endpoint.)
-  const userSession = await getServerSession(authOptions);
-  if (!userSession?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Load the session and verify the caller owns its campaign. We return
-  // 404 (not 403) on ownership failure to avoid leaking the existence of
-  // sessions that belong to other users — same pattern as the rest of
-  // the API surface (see /api/sessions/[id]/upload/route.ts).
+  // Auth gate first — never leak existence of arbitrary session ids
+  // to unauthenticated callers. Then look up the session so we can
+  // derive its campaign, then require owner access (transcription is
+  // a write op — players never trigger it). 404 (not 403) on no-access
+  // to avoid leaking session existence; matches the rest of the API.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
-  const campaign = await db.getCampaignById(session.campaignId);
-  if (!campaign || campaign.userId !== userSession.user.id) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
+  const access = await requireCampaignAccess(session.campaignId, 'owner');
+  if (!access.ok) return access.response;
 
   try {
     let fullPath: string;
@@ -129,21 +118,17 @@ export async function GET(
 ) {
   const { sessionId } = await params;
 
-  // Same auth + ownership pattern as POST. We never return transcript
-  // text to anyone who doesn't own the campaign.
-  const userSession = await getServerSession(authOptions);
-  if (!userSession?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+  // Players (any member) can read transcripts; only owners can write
+  // them (handled in POST above). Auth gate first to avoid leaking
+  // session existence to unauthenticated callers.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
-  const campaign = await db.getCampaignById(session.campaignId);
-  if (!campaign || campaign.userId !== userSession.user.id) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
+  const access = await requireCampaignAccess(session.campaignId, 'any');
+  if (!access.ok) return access.response;
 
   try {
     const transcriptions = await db.getTranscriptions(sessionId);

@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Calendar, Clock, BookOpen, ArrowLeft, AlertCircle, Play, Edit3, Save, X, FileText, Sparkles } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import MembersCard from '@/components/MembersCard';
+import InviteLinkCard from '@/components/InviteLinkCard';
 
 interface Campaign {
   id: string;
@@ -14,6 +16,7 @@ interface Campaign {
   systemPrompt: string | null;
   createdAt: string;
   updatedAt: string;
+  role: 'owner' | 'player';
 }
 
 interface Session {
@@ -132,6 +135,8 @@ export default function CampaignDetailsPage() {
     new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime()
   );
 
+  const isOwner = campaign?.role === 'owner';
+
   if (campaignLoading) {
     return (
       <div className="text-center py-12">
@@ -180,16 +185,18 @@ export default function CampaignDetailsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Sessions Timeline */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={`${isOwner ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6`}>
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900">Session Timeline</h2>
-              <Link href="/sessions/upload">
-                <Button size="sm" className="flex items-center space-x-2">
-                  <Play className="h-4 w-4" />
-                  <span>New Session</span>
-                </Button>
-              </Link>
+              {isOwner && (
+                <Link href="/sessions/upload">
+                  <Button size="sm" className="flex items-center space-x-2">
+                    <Play className="h-4 w-4" />
+                    <span>New Session</span>
+                  </Button>
+                </Link>
+              )}
             </div>
 
             {sessionsLoading ? (
@@ -201,9 +208,11 @@ export default function CampaignDetailsPage() {
               <div className="text-center py-8">
                 <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-3" />
                 <p className="text-gray-500 mb-4">No sessions yet for this campaign</p>
-                <Link href="/sessions/upload">
-                  <Button>Create First Session</Button>
-                </Link>
+                {isOwner && (
+                  <Link href="/sessions/upload">
+                    <Button>Create First Session</Button>
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -254,84 +263,91 @@ export default function CampaignDetailsPage() {
         </div>
 
         {/* System Prompt Card */}
-        <div className="lg:col-span-1">
-          <div className="bg-white rounded-xl border border-gray-200 p-6 sticky top-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Campaign Context</h2>
-              {!isEditingPrompt && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleEditPrompt}
-                  className="flex items-center space-x-1"
-                >
-                  <Edit3 className="h-3 w-3" />
-                  <span>Edit</span>
-                </Button>
-              )}
-            </div>
-
-            {isEditingPrompt ? (
-              <div className="space-y-4">
-                <textarea
-                  value={editedPrompt}
-                  onChange={(e) => setEditedPrompt(e.target.value)}
-                  className="w-full h-64 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  placeholder="Enter campaign context (characters, setting, story details) to enhance AI summaries..."
-                />
-                <div className="flex space-x-2">
-                  <Button
-                    size="sm"
-                    onClick={handleSavePrompt}
-                    disabled={updatePromptMutation.isPending}
-                    className="flex items-center space-x-1 flex-1"
-                  >
-                    <Save className="h-3 w-3" />
-                    <span>{updatePromptMutation.isPending ? 'Saving...' : 'Save'}</span>
-                  </Button>
+        {isOwner && (
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-xl border border-gray-200 p-6 sticky top-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900">Campaign Context</h2>
+                {!isEditingPrompt && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleCancelEdit}
-                    disabled={updatePromptMutation.isPending}
+                    onClick={handleEditPrompt}
                     className="flex items-center space-x-1"
                   >
-                    <X className="h-3 w-3" />
-                    <span>Cancel</span>
+                    <Edit3 className="h-3 w-3" />
+                    <span>Edit</span>
                   </Button>
-                </div>
+                )}
               </div>
-            ) : (
-              <div>
-                {campaign.systemPrompt ? (
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
-                    <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
-                      {campaign.systemPrompt}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-500 text-sm mb-3">No campaign context set</p>
-                    <p className="text-xs text-gray-400 mb-4">
-                      Add context to help AI generate better summaries
-                    </p>
-                    <Button size="sm" onClick={handleEditPrompt}>
-                      Add Context
+
+              {isEditingPrompt ? (
+                <div className="space-y-4">
+                  <textarea
+                    value={editedPrompt}
+                    onChange={(e) => setEditedPrompt(e.target.value)}
+                    className="w-full h-64 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    placeholder="Enter campaign context (characters, setting, story details) to enhance AI summaries..."
+                  />
+                  <div className="flex space-x-2">
+                    <Button
+                      size="sm"
+                      onClick={handleSavePrompt}
+                      disabled={updatePromptMutation.isPending}
+                      className="flex items-center space-x-1 flex-1"
+                    >
+                      <Save className="h-3 w-3" />
+                      <span>{updatePromptMutation.isPending ? 'Saving...' : 'Save'}</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelEdit}
+                      disabled={updatePromptMutation.isPending}
+                      className="flex items-center space-x-1"
+                    >
+                      <X className="h-3 w-3" />
+                      <span>Cancel</span>
                     </Button>
                   </div>
-                )}
-                {campaign.systemPrompt && (
-                  <div className="mt-3 pt-3 border-t border-gray-100">
-                    <p className="text-xs text-gray-500">
-                      This context is included in AI summary generation for all sessions in this campaign.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+                </div>
+              ) : (
+                <div>
+                  {campaign.systemPrompt ? (
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+                      <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
+                        {campaign.systemPrompt}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-500 text-sm mb-3">No campaign context set</p>
+                      <p className="text-xs text-gray-400 mb-4">
+                        Add context to help AI generate better summaries
+                      </p>
+                      <Button size="sm" onClick={handleEditPrompt}>
+                        Add Context
+                      </Button>
+                    </div>
+                  )}
+                  {campaign.systemPrompt && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <p className="text-xs text-gray-500">
+                        This context is included in AI summary generation for all sessions in this campaign.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+      </div>
+
+      <div className="space-y-6">
+        {isOwner && <InviteLinkCard campaignId={campaignId} />}
+        <MembersCard campaignId={campaignId} />
       </div>
     </div>
   );

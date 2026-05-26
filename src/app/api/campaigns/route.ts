@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       name: validatedData.name,
       description: validatedData.description,
       systemPrompt: validatedData.systemPrompt,
-      userId: session.user.id,
+      createdBy: session.user.id,
     });
     
     return NextResponse.json(campaign, { status: 201 });

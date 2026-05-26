@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 
 // NOTE: there are more session statuses in use than the four listed here
 // (e.g. 'transcribing', 'transcribed', 'summarizing', 'uploaded'). This
@@ -13,36 +12,28 @@ const updateSessionStatusSchema = z.object({
   status: z.enum(['pending', 'processing', 'completed', 'error']),
 });
 
-// Resolve a session for the current request, enforcing auth + ownership.
+// Resolve a session + assert campaign membership at the requested level.
 // Returns either a NextResponse (caller should return it directly) or the
-// session + its campaign for routes that need them.
-async function resolveOwnedSession(sessionId: string) {
-  const userSession = await getServerSession(authOptions);
-  if (!userSession?.user?.id) {
-    return {
-      error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
-    };
+// session plus the access info from requireCampaignAccess. Always
+// enforces auth before doing the session lookup so that unauthenticated
+// callers can never use the 404 path to probe for valid session ids.
+async function resolveSessionAccess(
+  sessionId: string,
+  level: 'any' | 'owner',
+) {
+  const authed = await requireSignedIn();
+  if (!authed.ok) {
+    return { error: authed.response };
   }
-
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return {
       error: NextResponse.json({ error: 'Session not found' }, { status: 404 }),
     };
   }
-
-  // db.getSessionById's `campaign` include only selects `name`, so we
-  // load the full campaign separately to check ownership. Same pattern
-  // as /api/sessions/[id]/upload/route.ts. Return 404 (not 403) on
-  // ownership failure to avoid leaking session existence.
-  const campaign = await db.getCampaignById(session.campaignId);
-  if (!campaign || campaign.userId !== userSession.user.id) {
-    return {
-      error: NextResponse.json({ error: 'Session not found' }, { status: 404 }),
-    };
-  }
-
-  return { session, campaign };
+  const access = await requireCampaignAccess(session.campaignId, level);
+  if (!access.ok) return { error: access.response };
+  return { session, role: access.role, userId: access.userId };
 }
 
 export async function GET(
@@ -59,7 +50,7 @@ export async function GET(
       );
     }
 
-    const resolved = await resolveOwnedSession(sessionId);
+    const resolved = await resolveSessionAccess(sessionId, 'any');
     if ('error' in resolved) return resolved.error;
 
     // Transform data to match existing API format
@@ -92,7 +83,7 @@ export async function PATCH(
       );
     }
 
-    const resolved = await resolveOwnedSession(sessionId);
+    const resolved = await resolveSessionAccess(sessionId, 'owner');
     if ('error' in resolved) return resolved.error;
 
     const body = await request.json();
@@ -131,7 +122,7 @@ export async function DELETE(
       );
     }
 
-    const resolved = await resolveOwnedSession(sessionId);
+    const resolved = await resolveSessionAccess(sessionId, 'owner');
     if ('error' in resolved) return resolved.error;
 
     await db.deleteSession(sessionId);

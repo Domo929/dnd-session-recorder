@@ -13,6 +13,7 @@ interface Campaign {
   systemPrompt: string | null;
   created_at: string;
   updated_at: string;
+  role?: 'owner' | 'player';
 }
 
 export default function CampaignsPage() {
@@ -116,6 +117,81 @@ export default function CampaignsPage() {
     });
   };
 
+  const ownerCampaigns = (campaigns ?? []).filter(
+    (c) => c.role === 'owner' || c.role === undefined,
+  );
+  const playerCampaigns = (campaigns ?? []).filter((c) => c.role === 'player');
+
+  const renderCard = (campaign: Campaign) => {
+    const isPlayer = campaign.role === 'player';
+    const badgeClasses = isPlayer
+      ? 'bg-blue-100 text-blue-800 border-blue-200'
+      : 'bg-green-100 text-green-800 border-green-200';
+    const badgeLabel = isPlayer ? 'Player' : 'Owner';
+    return (
+      <div
+        key={campaign.id}
+        className="bg-white rounded-xl border border-gray-200 hover:shadow-md transition-shadow"
+      >
+        <Link href={`/campaigns/${campaign.id}`}>
+          <div className="p-6 cursor-pointer">
+            <div className="flex flex-col h-full">
+              <div className="flex-1">
+                <div className="flex items-center space-x-2 mb-3 flex-wrap">
+                  <h3 className="text-xl font-semibold text-gray-900">
+                    {campaign.name}
+                  </h3>
+                  <span
+                    className={`px-2 py-0.5 rounded-full border text-xs font-medium ${badgeClasses}`}
+                  >
+                    {badgeLabel}
+                  </span>
+                </div>
+                {campaign.description && (
+                  <p className="text-gray-600 mb-4 line-clamp-3">
+                    {campaign.description}
+                  </p>
+                )}
+                <div className="flex items-center text-sm text-gray-500 mb-4">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  <span>Created {formatDate(campaign.created_at)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Link>
+        {!isPlayer && (
+          <div className="flex items-center space-x-2 px-6 pb-6 pt-2 border-t border-gray-100">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.preventDefault();
+                handleEdit(campaign);
+              }}
+              className="flex items-center space-x-1 flex-1"
+            >
+              <Edit3 className="h-4 w-4" />
+              <span>Edit</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.preventDefault();
+                handleDelete(campaign.id);
+              }}
+              className="flex items-center space-x-1 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-200"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Delete</span>
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -140,53 +216,29 @@ export default function CampaignsPage() {
           <Button onClick={openCreateModal}>Create Campaign</Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {campaigns.map((campaign) => (
-            <div key={campaign.id} className="bg-white rounded-xl border border-gray-200 hover:shadow-md transition-shadow">
-              <Link href={`/campaigns/${campaign.id}`}>
-                <div className="p-6 cursor-pointer">
-                  <div className="flex flex-col h-full">
-                    <div className="flex-1">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-3">{campaign.name}</h3>
-                      {campaign.description && (
-                        <p className="text-gray-600 mb-4 line-clamp-3">{campaign.description}</p>
-                      )}
-                      <div className="flex items-center text-sm text-gray-500 mb-4">
-                        <Calendar className="h-4 w-4 mr-2" />
-                        <span>Created {formatDate(campaign.created_at)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-              <div className="flex items-center space-x-2 px-6 pb-6 pt-2 border-t border-gray-100">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleEdit(campaign);
-                  }}
-                  className="flex items-center space-x-1 flex-1"
-                >
-                  <Edit3 className="h-4 w-4" />
-                  <span>Edit</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleDelete(campaign.id);
-                  }}
-                  className="flex items-center space-x-1 text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-200"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span>Delete</span>
-                </Button>
+        <div className="space-y-8">
+          <section>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">My campaigns</h2>
+            {ownerCampaigns.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+                <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500 mb-4">No campaigns yet. Create your first campaign to get started!</p>
+                <Button onClick={openCreateModal}>Create Campaign</Button>
               </div>
-            </div>
-          ))}
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {ownerCampaigns.map(renderCard)}
+              </div>
+            )}
+          </section>
+          {playerCampaigns.length > 0 && (
+            <section>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Shared with me</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {playerCampaigns.map(renderCard)}
+              </div>
+            </section>
+          )}
         </div>
       )}
 

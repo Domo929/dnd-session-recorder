@@ -5,7 +5,7 @@ export interface CreateCampaignData {
   name: string;
   description?: string;
   systemPrompt?: string;
-  userId: string;
+  createdBy: string;
 }
 
 export interface CreateSessionData {
@@ -46,26 +46,50 @@ export interface SessionListItem extends GamingSession {
 export class DatabaseService {
   // Campaign operations
   async createCampaign(data: CreateCampaignData): Promise<Campaign> {
-    return prisma.campaign.create({
-      data: {
-        name: data.name,
-        description: data.description,
-        systemPrompt: data.systemPrompt,
-        userId: data.userId,
-      },
+    return prisma.$transaction(async (tx) => {
+      const campaign = await tx.campaign.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          systemPrompt: data.systemPrompt,
+          createdBy: data.createdBy,
+        },
+      });
+      await tx.member.create({
+        data: {
+          campaignId: campaign.id,
+          userId: data.createdBy,
+          role: 'owner',
+        },
+      });
+      return campaign;
     });
   }
-  
-  async getCampaigns(userId?: string): Promise<(Campaign & { _count: { gamingSessions: number } })[]> {
-    return prisma.campaign.findMany({
-      where: userId ? { userId } : undefined,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: {
-          select: { gamingSessions: true },
-        },
-      },
+
+  async getCampaigns(userId?: string): Promise<(Campaign & {
+    _count: { gamingSessions: number };
+    role?: 'owner' | 'player';
+  })[]> {
+    if (!userId) {
+      return prisma.campaign.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { _count: { select: { gamingSessions: true } } },
+      });
+    }
+    const memberships = await prisma.member.findMany({
+      where: { userId },
+      select: { role: true, campaignId: true },
     });
+    if (memberships.length === 0) return [];
+    const byCampaign = new Map(
+      memberships.map((m) => [m.campaignId, m.role as 'owner' | 'player']),
+    );
+    const campaigns = await prisma.campaign.findMany({
+      where: { id: { in: [...byCampaign.keys()] } },
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { gamingSessions: true } } },
+    });
+    return campaigns.map((c) => ({ ...c, role: byCampaign.get(c.id) }));
   }
   
   async getCampaignById(id: string): Promise<Campaign | null> {
@@ -109,7 +133,7 @@ export class DatabaseService {
   async getSessions(userId?: string, campaignId?: string): Promise<SessionListItem[]> {
     return prisma.gamingSession.findMany({
       where: {
-        ...(userId && { campaign: { userId } }),
+        ...(userId && { campaign: { members: { some: { userId } } } }),
         ...(campaignId && { campaignId }),
       },
       include: {
@@ -397,15 +421,19 @@ export class DatabaseService {
     completedSessions: number;
     totalCampaigns: number;
   }> {
-    const where = userId ? { campaign: { userId } } : undefined;
-    const campaignWhere = userId ? { userId } : undefined;
-    
+    const where = userId
+      ? { campaign: { members: { some: { userId } } } }
+      : undefined;
+    const campaignWhere = userId
+      ? { members: { some: { userId } } }
+      : undefined;
+
     const [totalSessions, completedSessions, totalCampaigns] = await Promise.all([
       prisma.gamingSession.count({ where }),
       prisma.gamingSession.count({ where: { ...where, status: 'completed' } }),
       prisma.campaign.count({ where: campaignWhere }),
     ]);
-    
+
     return {
       totalSessions,
       completedSessions,
