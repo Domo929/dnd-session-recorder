@@ -1,0 +1,51 @@
+# Compose overlay for `npm run smoke`. Layered on top of the base
+# docker-compose.yml via `-f docker-compose.yml -f docker-compose.smoke.yml`.
+#
+# Goals:
+#   - Use the SAME production Docker image we ship, so the smoke test catches
+#     build-time issues (webpack resolution, missing files, etc.).
+#   - Replace real AI providers with mocks so no API keys are needed.
+#   - Use an ABSOLUTE UPLOAD_DIR (not the default `./uploads`) so file-path
+#     bugs that only reproduce with absolute paths in production (like the
+#     `/home/uploads` path bug in Azure App Service) get caught.
+#   - Isolate state from any running dev compose stack: smoke runs under
+#     compose project name `smoke-test` (set in scripts/smoke.sh), and the
+#     postgres + uploads volumes here are named volumes scoped to that
+#     project so `compose down -v` fully cleans up.
+services:
+  postgres:
+    # Replace the host bind mount from the base file. Compose deduplicates
+    # service volumes by container target path, so this overrides
+    # `./data/postgres:/var/lib/postgresql/data`.
+    volumes:
+      - smoke-postgres-data:/var/lib/postgresql/data
+    # Don't expose Postgres to the host — the app talks to it via the
+    # docker network. Avoids "port 5432 already allocated" when a dev
+    # compose stack (or local Postgres) is already running.
+    ports: !reset []
+
+  dnd-recorder:
+    environment:
+      - AI_TRANSCRIPTION_PROVIDER=mock
+      - AI_SUMMARY_PROVIDER=mock
+      # Real API keys deliberately unset — the mock providers don't need them.
+      - OPENAI_API_KEY=
+      - GOOGLE_GENERATIVE_AI_API_KEY=
+      # Disable Google OAuth so the credentials form is the only sign-in option.
+      - GOOGLE_CLIENT_ID=
+      - GOOGLE_CLIENT_SECRET=
+      - NEXT_PUBLIC_GOOGLE_ENABLED=false
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=smoke-test-not-a-real-secret
+      - CORS_ORIGIN=http://localhost:3000
+      - MAX_FILE_SIZE=100000000
+      # Absolute path so the same class of "file written here, looked up
+      # there" bug we hit in production cannot pass the smoke test.
+      - UPLOAD_DIR=/srv/smoke-uploads
+    volumes:
+      # Named volume for the absolute upload dir. Cleaned by `down -v`.
+      - smoke-uploads:/srv/smoke-uploads
+
+volumes:
+  smoke-postgres-data:
+  smoke-uploads:

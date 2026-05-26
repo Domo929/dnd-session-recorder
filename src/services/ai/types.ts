@@ -1,7 +1,7 @@
 import type { LanguageModel } from 'ai';
 
-export type SummaryProvider = 'openai' | 'google';
-export type TranscriptionProvider = 'openai' | 'google' | 'whisper-local';
+export type SummaryProvider = 'openai' | 'google' | 'mock';
+export type TranscriptionProvider = 'openai' | 'google' | 'whisper-local' | 'mock';
 
 export const DEFAULT_SUMMARY_PROVIDER: SummaryProvider = 'openai';
 export const DEFAULT_TRANSCRIPTION_PROVIDER: TranscriptionProvider = 'openai';
