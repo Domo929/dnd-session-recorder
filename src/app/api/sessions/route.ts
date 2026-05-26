@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
+import { requireCampaignAccess } from '@/lib/permissions';
 
 const createSessionSchema = z.object({
   campaign_id: z.string('Campaign ID must be a positive integer'),
@@ -47,38 +48,25 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
     const body = await request.json();
     const validatedData = createSessionSchema.parse(body);
-    
-    // Verify campaign exists and belongs to user
-    const campaign = await db.getCampaignById(validatedData.campaign_id);
-    if (!campaign || campaign.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Campaign not found' },
-        { status: 404 }
-      );
-    }
-    
-    // If upload_id is provided, verify it exists and belongs to user
+
+    // Verify campaign membership AND require owner role to create sessions.
+    const access = await requireCampaignAccess(validatedData.campaign_id, 'owner');
+    if (!access.ok) return access.response;
+
+    // If upload_id is provided, verify it exists and belongs to this user
+    // (uploads remain per-user, independent of campaign membership).
     if (validatedData.upload_id) {
       const upload = await db.getUploadById(validatedData.upload_id);
-      if (!upload || upload.userId !== session.user.id) {
+      if (!upload || upload.userId !== access.userId) {
         return NextResponse.json(
           { error: 'Upload not found' },
           { status: 404 }
         );
       }
     }
-    
+
     const gamingSession = await db.createSession({
       campaignId: validatedData.campaign_id,
       title: validatedData.title,
@@ -88,7 +76,7 @@ export async function POST(request: Request) {
       duration: validatedData.duration ?? undefined,
       status: validatedData.status,
     });
-    
+
     return NextResponse.json(gamingSession, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -97,7 +85,7 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    
+
     console.error('Error creating session:', error);
     return NextResponse.json(
       { error: 'Failed to create session' },
