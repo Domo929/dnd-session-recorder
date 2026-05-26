@@ -4,6 +4,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { attachPendingInvitations } from '@/lib/invitations';
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -101,6 +102,13 @@ export const authOptions: NextAuthOptions = {
   events: {
     async signIn({ user, account, profile, isNewUser }) {
       console.log('SignIn event - Success:', { user, account, profile, isNewUser });
+      try {
+        if (user?.id && user.email) {
+          await attachPendingInvitations(user.id, user.email);
+        }
+      } catch (err) {
+        console.error('[auth.signIn] attachPendingInvitations failed:', err);
+      }
     },
     async signOut({ session, token }) {
       console.log('SignOut event:', { session, token });
