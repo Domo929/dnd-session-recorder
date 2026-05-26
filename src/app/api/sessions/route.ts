@@ -10,7 +10,7 @@ const createSessionSchema = z.object({
   session_date: z.string('Invalid session date format'),
   upload_id: z.string().optional(),
   audio_file_path: z.string().optional(),
-  duration: z.number().int().positive().optional(),
+  duration: z.number().int().positive().nullish(),
   status: z.string().optional(),
 });
 
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
       sessionDate: new Date(validatedData.session_date),
       uploadId: validatedData.upload_id,
       audioFilePath: validatedData.audio_file_path,
-      duration: validatedData.duration,
+      duration: validatedData.duration ?? undefined,
       status: validatedData.status,
     });
     
