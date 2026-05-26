@@ -1,10 +1,9 @@
 # Use Node.js LTS Alpine image for minimal size
 FROM node:22-alpine AS base
 
-# Install dependencies needed for ffprobe and other tools
+# Runtime tools: ffmpeg for audio processing
 RUN apk add --no-cache \
     ffmpeg \
-    sqlite \
     && rm -rf /var/cache/apk/*
 
 # Set working directory
@@ -35,23 +34,22 @@ WORKDIR /app
 ENV NODE_ENV production
 ENV PORT 3000
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
 # Copy necessary files
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
-# Create directories for data persistence
-RUN mkdir -p uploads prisma/data
-RUN chown -R nextjs:nodejs uploads prisma/data
+# Create directory for uploads (mounted as volume in production)
+RUN mkdir -p uploads
 
-# Switch to non-root user
-USER nextjs
+# NOTE: Container runs as root. Local docker isolation is fine for dev,
+# and managed hosts (Azure App Service, etc.) provide their own user/UID
+# remapping plus volume permission handling. Adding a USER directive here
+# breaks /home and /var/* persistent mounts on App Service.
 
 # Expose port
 EXPOSE 3000
@@ -60,5 +58,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Start the application
-CMD ["node", "server.js"]
+# Apply pending Prisma migrations on every boot (idempotent), then start the server.
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]

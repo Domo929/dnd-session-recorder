@@ -21,7 +21,7 @@ An AI-powered web application for recording, transcribing, and summarizing Dunge
 
 - **Frontend**: Next.js 15 with React 19, TypeScript, Tailwind CSS
 - **Backend**: Next.js API Routes with serverless functions
-- **Database**: SQLite with Prisma ORM
+- **Database**: PostgreSQL with Prisma ORM (SQLite supported on the upstream branch only)
 - **Authentication**: NextAuth.js with Google OAuth and local credentials
 - **AI Services**: OpenAI API (Whisper for transcription, GPT-4 for summaries)
 - **File Processing**: FFmpeg for audio processing and metadata extraction
@@ -78,18 +78,28 @@ The application uses a well-structured database with the following key entities:
    
    Edit `.env.local` with your configuration (see Environment Variables section below).
 
-4. **Set up the database**:
+4. **Start PostgreSQL** (required, replaces previous SQLite setup):
    ```bash
-   npx prisma generate
-   npx prisma db push
+   # Easiest: use the bundled docker-compose service
+   docker compose up -d postgres
+
+   # Or run a standalone container:
+   # docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=devpassword \
+   #   -e POSTGRES_USER=dndrec -e POSTGRES_DB=dndrec --name dnd-postgres postgres:16-alpine
    ```
 
-5. **Run the development server**:
+5. **Set up the database schema**:
+   ```bash
+   npx prisma migrate deploy
+   npx prisma generate
+   ```
+
+6. **Run the development server**:
    ```bash
    npm run dev
    ```
 
-6. **Open the application**:
+7. **Open the application**:
    Visit [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Environment Variables
@@ -97,8 +107,8 @@ The application uses a well-structured database with the following key entities:
 Create a `.env.local` file in the project root with the following variables:
 
 ```bash
-# Database
-DATABASE_URL="file:./prisma/data/dev.db"
+# Database (PostgreSQL — see "Start PostgreSQL" step above)
+DATABASE_URL="postgresql://dndrec:devpassword@localhost:5432/dndrec"
 
 # OpenAI Configuration (Required)
 OPENAI_API_KEY="your-openai-api-key"

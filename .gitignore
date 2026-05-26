@@ -3,6 +3,7 @@
 uploads/
 node_modules/
 prisma/data/
+data/
 .claude/
 **dist/
 **build/
