@@ -53,6 +53,7 @@ dist/
 # Local development
 uploads/
 prisma/data/
+data/
 *.db
 *.db-journal
 

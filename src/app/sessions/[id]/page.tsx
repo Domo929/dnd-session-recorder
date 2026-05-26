@@ -11,6 +11,7 @@ interface Upload {
   id: string;
   filename: string;
   originalName: string;
+  path: string;
   size: number;
   mimetype: string;
   duration?: number;
@@ -355,7 +356,7 @@ export default function SessionDetailPage() {
     try {
       // Step 1: Generate transcription
       setProcessingStep('transcribe');
-      await transcribeMutation.mutateAsync();
+      await transcribeMutation.mutateAsync({});
 
       // Step 2: Generate summary
       setProcessingStep('summarize');

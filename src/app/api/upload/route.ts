@@ -5,8 +5,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-
-var ffprobe = require('ffprobe-static');
+import ffprobeStatic from 'ffprobe-static';
 
 // Configure upload settings
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
@@ -35,7 +34,7 @@ async function ensureUploadDir() {
 async function getAudioDuration(filePath: string): Promise<number | null> {
   try {
     const execAsync = promisify(exec);
-    const ffprobeBin = "./"+(ffprobe.path as string).substring(5);
+    const ffprobeBin = "./"+(ffprobeStatic.path as string).substring(5);
     const command = `${ffprobeBin} -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`;
     const { stdout } = await execAsync(command);
     const duration = parseFloat(stdout.trim());
