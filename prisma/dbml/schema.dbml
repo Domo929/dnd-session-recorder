@@ -13,7 +13,8 @@ Table User {
   updatedAt DateTime [not null]
   accounts Account [not null]
   sessions Session [not null]
-  campaigns campaigns [not null]
+  campaignsCreated campaigns [not null]
+  members members [not null]
   uploads uploads [not null]
 }
 
@@ -66,14 +67,17 @@ Table campaigns {
   name String [not null]
   description String
   systemPrompt String
-  userId String [not null]
+  createdBy String [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
-  user User [not null]
+  creator User [not null]
+  members members [not null]
   gamingSessions gaming_sessions [not null]
+  inviteLinks invite_links [not null]
+  invitations invitations [not null]
 
   indexes {
-    (userId, name) [unique]
+    (createdBy, name) [unique]
   }
 }
 
@@ -138,11 +142,51 @@ Table uploads {
   gamingSessions gaming_sessions [not null]
 }
 
+Table members {
+  id String [pk]
+  campaignId String [not null]
+  userId String [not null]
+  role String [not null]
+  invitedBy String
+  joinedAt DateTime [default: `now()`, not null]
+  campaign campaigns [not null]
+  user User [not null]
+
+  indexes {
+    (campaignId, userId) [unique]
+  }
+}
+
+Table invite_links {
+  id String [pk]
+  campaignId String [not null]
+  tokenHash String [unique, not null]
+  createdBy String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  expiresAt DateTime
+  revokedAt DateTime
+  campaign campaigns [not null]
+}
+
+Table invitations {
+  id String [pk]
+  campaignId String [not null]
+  email String [not null]
+  invitedBy String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  acceptedAt DateTime
+  campaign campaigns [not null]
+
+  indexes {
+    (campaignId, email) [unique]
+  }
+}
+
 Ref: Account.userId > User.id [delete: Cascade]
 
 Ref: Session.userId > User.id [delete: Cascade]
 
-Ref: campaigns.userId > User.id [delete: Cascade]
+Ref: campaigns.createdBy > User.id [delete: Restrict]
 
 Ref: gaming_sessions.campaignId > campaigns.id [delete: Cascade]
 
@@ -153,3 +197,11 @@ Ref: transcriptions.sessionId > gaming_sessions.id [delete: Cascade]
 Ref: summaries.sessionId - gaming_sessions.id [delete: Cascade]
 
 Ref: uploads.userId > User.id [delete: Cascade]
+
+Ref: members.campaignId > campaigns.id [delete: Cascade]
+
+Ref: members.userId > User.id [delete: Cascade]
+
+Ref: invite_links.campaignId > campaigns.id [delete: Cascade]
+
+Ref: invitations.campaignId > campaigns.id [delete: Cascade]
