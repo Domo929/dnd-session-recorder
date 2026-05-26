@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
+import { requireCampaignAccess } from '@/lib/permissions';
 
 const linkUploadSchema = z.object({
   upload_id: z.string().min(1, 'Upload ID is required'),
 });
+
+const FROZEN_STATUSES = new Set(['transcribing', 'transcribed', 'summarizing', 'completed']);
+
+async function resolveSession(sessionId: string) {
+  const gamingSession = await db.getSessionById(sessionId);
+  if (!gamingSession) {
+    return {
+      error: NextResponse.json({ error: 'Session not found' }, { status: 404 }),
+    };
+  }
+  const access = await requireCampaignAccess(gamingSession.campaignId, 'owner');
+  if (!access.ok) return { error: access.response };
+  return { gamingSession, access };
+}
 
 // POST /api/sessions/[id]/upload - Link upload to session
 export async function POST(
@@ -14,62 +27,33 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
     const sessionId = (await params).id;
-    
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
+    const resolved = await resolveSession(sessionId);
+    if ('error' in resolved) return resolved.error;
+    const { gamingSession, access } = resolved;
+
     const body = await request.json();
     const validatedData = linkUploadSchema.parse(body);
-    
-    // Verify session exists and belongs to user
-    const gamingSession = await db.getSessionById(sessionId);
-    if (!gamingSession) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if user owns the campaign this session belongs to
-    const campaign = await db.getCampaignById(gamingSession.campaignId);
-    if (!campaign || campaign.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if session is in a state that allows upload linking
-    if (['transcribing', 'transcribed', 'summarizing', 'completed'].includes(gamingSession.status)) {
+
+    if (FROZEN_STATUSES.has(gamingSession.status)) {
       return NextResponse.json(
         { error: 'Cannot change upload after transcription has started' },
         { status: 400 }
       );
     }
-    
-    // Verify upload exists and belongs to user
+
     const upload = await db.getUploadById(validatedData.upload_id);
-    if (!upload || upload.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Upload not found' },
-        { status: 404 }
-      );
+    if (!upload || upload.userId !== access.userId) {
+      return NextResponse.json({ error: 'Upload not found' }, { status: 404 });
     }
-    
-    // Link upload to session
+
     const updatedSession = await db.linkSessionToUpload(sessionId, validatedData.upload_id);
-    
+
     return NextResponse.json({
       message: 'Upload linked to session successfully',
       session: updatedSession
     });
-    
+
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -77,7 +61,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    
+
     console.error('Error linking upload to session:', error);
     return NextResponse.json(
       { error: 'Failed to link upload to session' },
@@ -92,62 +76,33 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
     const sessionId = (await params).id;
-    
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
+    const resolved = await resolveSession(sessionId);
+    if ('error' in resolved) return resolved.error;
+    const { gamingSession, access } = resolved;
+
     const body = await request.json();
     const validatedData = linkUploadSchema.parse(body);
-    
-    // Verify session exists and belongs to user
-    const gamingSession = await db.getSessionById(sessionId);
-    if (!gamingSession) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if user owns the campaign this session belongs to
-    const campaign = await db.getCampaignById(gamingSession.campaignId);
-    if (!campaign || campaign.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if session is in a state that allows upload replacement
-    if (['transcribing', 'transcribed', 'summarizing', 'completed'].includes(gamingSession.status)) {
+
+    if (FROZEN_STATUSES.has(gamingSession.status)) {
       return NextResponse.json(
         { error: 'Cannot change upload after transcription has started' },
         { status: 400 }
       );
     }
-    
-    // Verify upload exists and belongs to user
+
     const upload = await db.getUploadById(validatedData.upload_id);
-    if (!upload || upload.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Upload not found' },
-        { status: 404 }
-      );
+    if (!upload || upload.userId !== access.userId) {
+      return NextResponse.json({ error: 'Upload not found' }, { status: 404 });
     }
-    
-    // Replace upload
+
     const updatedSession = await db.linkSessionToUpload(sessionId, validatedData.upload_id);
-    
+
     return NextResponse.json({
       message: 'Upload replaced successfully',
       session: updatedSession
     });
-    
+
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -155,7 +110,7 @@ export async function PUT(
         { status: 400 }
       );
     }
-    
+
     console.error('Error replacing upload:', error);
     return NextResponse.json(
       { error: 'Failed to replace upload' },
@@ -166,54 +121,29 @@ export async function PUT(
 
 // DELETE /api/sessions/[id]/upload - Unlink upload from session
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
     const sessionId = (await params).id;
-    
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
-    // Verify session exists and belongs to user
-    const gamingSession = await db.getSessionById(sessionId);
-    if (!gamingSession) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if user owns the campaign this session belongs to
-    const campaign = await db.getCampaignById(gamingSession.campaignId);
-    if (!campaign || campaign.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Check if session is in a state that allows upload unlinking
-    if (['transcribing', 'transcribed', 'summarizing', 'completed'].includes(gamingSession.status)) {
+    const resolved = await resolveSession(sessionId);
+    if ('error' in resolved) return resolved.error;
+    const { gamingSession } = resolved;
+
+    if (FROZEN_STATUSES.has(gamingSession.status)) {
       return NextResponse.json(
         { error: 'Cannot remove upload after transcription has started' },
         { status: 400 }
       );
     }
-    
-    // Unlink upload from session
+
     const updatedSession = await db.unlinkSessionFromUpload(sessionId);
-    
+
     return NextResponse.json({
       message: 'Upload unlinked from session successfully',
       session: updatedSession
     });
-    
+
   } catch (error) {
     console.error('Error unlinking upload from session:', error);
     return NextResponse.json(

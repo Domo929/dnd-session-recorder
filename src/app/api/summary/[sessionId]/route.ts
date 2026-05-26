@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { db } from '@/services/database';
+import { requireCampaignAccess } from '@/lib/permissions';
 import { getSummaryModel } from '@/services/ai';
 import { generateText } from 'ai';
 
@@ -33,42 +32,31 @@ function formatTranscriptionsForSummary(transcriptions: Array<{ text: string }>)
 
 // POST /api/summary/[sessionId] - Generate summary
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
 
-  // Auth gate runs before any DB / AI work so unauth callers can't burn
-  // tokens or push the session into 'error' state.
-  const userSession = await getServerSession(authOptions);
-  if (!userSession?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
-    // Check if session exists
     const session = await db.getSessionById(sessionId);
     if (!session) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    // Get campaign information to include system prompt AND verify the
-    // caller owns the campaign. Return 404 on ownership failure to avoid
-    // leaking existence.
+    // Owner-only: summary generation burns tokens and overwrites state.
+    const access = await requireCampaignAccess(session.campaignId, 'owner');
+    if (!access.ok) return access.response;
+
+    // Look up the campaign for its (optional) systemPrompt; access has
+    // already vetted that the caller can read it.
     const campaign = await db.getCampaignById(session.campaignId);
-    if (!campaign || campaign.userId !== userSession.user.id) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
+    if (!campaign) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
     // Get transcriptions for this session
     const transcriptions = await db.getTranscriptions(sessionId);
-    
+
     if (!transcriptions || transcriptions.length === 0) {
       return NextResponse.json(
         { error: 'No transcriptions found for this session' },
@@ -150,26 +138,18 @@ export async function POST(
 
 // GET /api/summary/[sessionId] - Get summary for a session
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
 
-  const userSession = await getServerSession(authOptions);
-  if (!userSession?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Verify the session exists AND the caller owns its campaign before
-  // returning summary text.
   const gamingSession = await db.getSessionById(sessionId);
   if (!gamingSession) {
     return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
   }
-  const campaign = await db.getCampaignById(gamingSession.campaignId);
-  if (!campaign || campaign.userId !== userSession.user.id) {
-    return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
-  }
+  // Any member can read the summary.
+  const access = await requireCampaignAccess(gamingSession.campaignId, 'any');
+  if (!access.ok) return access.response;
 
   try {
     const summary = await db.getSummary(sessionId);
@@ -198,57 +178,33 @@ export async function PUT(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
-  
+
   try {
-    // Check authentication
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
     const body = await request.json();
     const validatedData = updateSummarySchema.parse(body);
-    
-    // Verify session exists and belongs to user
+
     const gamingSession = await db.getSessionById(sessionId);
     if (!gamingSession) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
-    
-    // Check if user owns the campaign this session belongs to
-    const campaign = await db.getCampaignById(gamingSession.campaignId);
-    if (!campaign || campaign.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-    
-    // Verify summary exists
+    // Owner-only: rewriting the summary is a write.
+    const access = await requireCampaignAccess(gamingSession.campaignId, 'owner');
+    if (!access.ok) return access.response;
+
     const existingSummary = await db.getSummary(sessionId);
     if (!existingSummary) {
-      return NextResponse.json(
-        { error: 'Summary not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
     }
-    
-    // Update summary
+
     const updatedSummary = await db.updateSummary(sessionId, validatedData.summary_text);
-    
+
     console.log(`[Summary] Summary updated for session ${sessionId}`);
-    
+
     return NextResponse.json({
       message: 'Summary updated successfully',
       summary: updatedSummary
     });
-    
+
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -256,9 +212,9 @@ export async function PUT(
         { status: 400 }
       );
     }
-    
+
     console.error('Error updating summary:', error);
-    
+
     return NextResponse.json(
       { error: 'Failed to update summary' },
       { status: 500 }
