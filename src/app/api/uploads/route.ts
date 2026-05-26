@@ -6,35 +6,35 @@ import { v4 as uuidv4 } from 'uuid';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import ffprobeStatic from 'ffprobe-static';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { db } from '@/services/database';
 
-// Configure upload settings
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
 const maxFileSize = parseInt(process.env.MAX_FILE_SIZE || '100000000'); // 100MB default
 
-// Allowed audio file types
 const allowedMimeTypes = [
   'audio/mpeg',
   'audio/mp3',
   'audio/wav',
   'audio/ogg',
   'audio/m4a',
+  'audio/mp4',
   'audio/aac',
   'audio/flac',
-  'audio/webm'
+  'audio/webm',
 ];
 
-// Ensure upload directory exists
 async function ensureUploadDir() {
   if (!existsSync(uploadDir)) {
     await mkdir(uploadDir, { recursive: true });
   }
 }
 
-// Get audio duration using ffprobe
 async function getAudioDuration(filePath: string): Promise<number | null> {
   try {
     const execAsync = promisify(exec);
-    const ffprobeBin = "./"+(ffprobeStatic.path as string).substring(5);
+    const ffprobeBin = './' + (ffprobeStatic.path as string).substring(5);
     const command = `${ffprobeBin} -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`;
     const { stdout } = await execAsync(command);
     const duration = parseFloat(stdout.trim());
@@ -45,22 +45,39 @@ async function getAudioDuration(filePath: string): Promise<number | null> {
   }
 }
 
-// POST /api/upload - Upload audio file
-export async function POST(request: NextRequest) {
+// GET /api/uploads - list uploads owned by the signed-in user
+export async function GET() {
   try {
-    await ensureUploadDir();
-    
-    const formData = await request.formData();
-    const file = formData.get('audio') as File;
-    
-    if (!file) {
-      return NextResponse.json(
-        { error: 'No audio file provided' },
-        { status: 400 }
-      );
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Validate file type
+    const uploads = await db.getUploads(session.user.id);
+    return NextResponse.json({ uploads });
+  } catch (error) {
+    console.error('Error listing uploads:', error);
+    return NextResponse.json({ error: 'Failed to list uploads' }, { status: 500 });
+  }
+}
+
+// POST /api/uploads - upload an audio file and persist an Upload row for the signed-in user
+export async function POST(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    await ensureUploadDir();
+
+    const formData = await request.formData();
+    const file = formData.get('audio') as File | null;
+
+    if (!file) {
+      return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });
+    }
+
     if (!allowedMimeTypes.includes(file.type)) {
       return NextResponse.json(
         { error: 'Invalid file type. Only audio files are allowed.' },
@@ -68,51 +85,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file size
     if (file.size > maxFileSize) {
-      return NextResponse.json(
-        { error: 'File too large' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'File too large' }, { status: 400 });
     }
 
-    // Generate unique filename
     const extension = path.extname(file.name);
     const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
     const filePath = path.join(uploadDir, uniqueName);
 
-    // Convert file to buffer and save
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    
+
     await writeFile(filePath, buffer);
 
-    // Get audio duration
     const duration = await getAudioDuration(filePath);
 
-    const fileInfo = {
+    const upload = await db.createUpload({
+      userId: session.user.id,
       filename: uniqueName,
       originalName: file.name,
       path: filePath,
       size: file.size,
       mimetype: file.type,
-      duration: duration,
-      uploadedAt: new Date().toISOString()
-    };
+      duration: duration ?? undefined,
+    });
 
-    console.log(`[Upload] File uploaded successfully: ${uniqueName}`);
+    console.log(`[Upload] File uploaded successfully: ${uniqueName} (id=${upload.id})`);
 
     return NextResponse.json({
       message: 'File uploaded successfully',
-      file: fileInfo
+      upload,
     });
-
   } catch (error) {
     console.error('Upload error:', error);
-    
-    return NextResponse.json(
-      { error: 'Failed to upload file' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });
   }
 }
