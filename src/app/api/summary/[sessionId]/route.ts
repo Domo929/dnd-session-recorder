@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/services/database';
-import { requireCampaignAccess } from '@/lib/permissions';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 import { getSummaryModel } from '@/services/ai';
 import { generateText } from 'ai';
 
@@ -36,6 +36,11 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
+
+  // Auth gate first — avoid leaking session existence to unauthenticated
+  // callers via the not-found short-circuit below.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
 
   try {
     const session = await db.getSessionById(sessionId);
@@ -143,6 +148,10 @@ export async function GET(
 ) {
   const { sessionId } = await params;
 
+  // Auth gate first — avoid leaking session existence via 404 below.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
+
   const gamingSession = await db.getSessionById(sessionId);
   if (!gamingSession) {
     return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
@@ -178,6 +187,10 @@ export async function PUT(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
+
+  // Auth gate first — avoid leaking session existence via 404 below.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
 
   try {
     const body = await request.json();

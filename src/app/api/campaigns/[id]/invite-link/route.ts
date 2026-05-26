@@ -9,6 +9,16 @@ const createSchema = z.object({
 });
 
 function buildInviteUrl(request: NextRequest, rawToken: string): string {
+  // Prefer NEXTAUTH_URL (the configured public app URL — same value
+  // NextAuth uses for OAuth callbacks). This avoids returning internal
+  // hostnames like the Docker container id when the app is behind a
+  // proxy or reverse-routed, which would otherwise leak via the
+  // request URL / Host header. Fall back to the request origin only
+  // if NEXTAUTH_URL isn't set (e.g. some unconfigured dev setup).
+  const configured = process.env.NEXTAUTH_URL?.replace(/\/$/, '');
+  if (configured) {
+    return `${configured}/campaigns/invite/${rawToken}`;
+  }
   const origin = request.headers.get('origin') ?? new URL(request.url).origin;
   return `${origin}/campaigns/invite/${rawToken}`;
 }

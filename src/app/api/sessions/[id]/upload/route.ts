@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/services/database';
-import { requireCampaignAccess } from '@/lib/permissions';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 
 const linkUploadSchema = z.object({
   upload_id: z.string().min(1, 'Upload ID is required'),
@@ -10,6 +10,12 @@ const linkUploadSchema = z.object({
 const FROZEN_STATUSES = new Set(['transcribing', 'transcribed', 'summarizing', 'completed']);
 
 async function resolveSession(sessionId: string) {
+  // Auth gate before the session lookup so unauthenticated callers can't
+  // distinguish "session exists" from "session does not exist" via 404.
+  const authed = await requireSignedIn();
+  if (!authed.ok) {
+    return { error: authed.response };
+  }
   const gamingSession = await db.getSessionById(sessionId);
   if (!gamingSession) {
     return {

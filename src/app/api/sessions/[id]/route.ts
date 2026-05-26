@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/services/database';
-import { requireCampaignAccess } from '@/lib/permissions';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 
 // NOTE: there are more session statuses in use than the four listed here
 // (e.g. 'transcribing', 'transcribed', 'summarizing', 'uploaded'). This
@@ -14,11 +14,17 @@ const updateSessionStatusSchema = z.object({
 
 // Resolve a session + assert campaign membership at the requested level.
 // Returns either a NextResponse (caller should return it directly) or the
-// session plus the access info from requireCampaignAccess.
+// session plus the access info from requireCampaignAccess. Always
+// enforces auth before doing the session lookup so that unauthenticated
+// callers can never use the 404 path to probe for valid session ids.
 async function resolveSessionAccess(
   sessionId: string,
   level: 'any' | 'owner',
 ) {
+  const authed = await requireSignedIn();
+  if (!authed.ok) {
+    return { error: authed.response };
+  }
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return {

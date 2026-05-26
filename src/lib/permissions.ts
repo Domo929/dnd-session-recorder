@@ -30,6 +30,27 @@ export type RequireAccessResult =
   | { ok: true; userId: string; role: CampaignRole }
   | { ok: false; response: NextResponse };
 
+export type RequireSignedInResult =
+  | { ok: true; userId: string }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Cheap auth-only check for routes that need to look up DB state (e.g.
+ * resolve a session id to its campaign) BEFORE they can call
+ * requireCampaignAccess. Returning 401 here keeps us from leaking the
+ * existence of arbitrary session ids to unauthenticated callers.
+ */
+export async function requireSignedIn(): Promise<RequireSignedInResult> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+    };
+  }
+  return { ok: true, userId: session.user.id };
+}
+
 /**
  * One-stop access check for API routes. Always:
  *   - 401 if not signed in

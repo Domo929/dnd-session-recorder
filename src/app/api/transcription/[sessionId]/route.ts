@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/services/database';
-import { requireCampaignAccess } from '@/lib/permissions';
+import { requireCampaignAccess, requireSignedIn } from '@/lib/permissions';
 import { fileCleanup } from '@/services/fileCleanup';
 import { transcribeAudio } from '@/services/ai';
 import fs from 'fs';
@@ -27,10 +27,13 @@ export async function POST(
 ) {
   const { sessionId } = await params;
 
-  // Load the session first so we can derive its campaign for the access
-  // check, then require owner access (transcription is a write operation
-  // — players never trigger it). 404 (not 403) on no-access to avoid
-  // leaking session existence; this matches the rest of the API surface.
+  // Auth gate first — never leak existence of arbitrary session ids
+  // to unauthenticated callers. Then look up the session so we can
+  // derive its campaign, then require owner access (transcription is
+  // a write op — players never trigger it). 404 (not 403) on no-access
+  // to avoid leaking session existence; matches the rest of the API.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
@@ -116,7 +119,10 @@ export async function GET(
   const { sessionId } = await params;
 
   // Players (any member) can read transcripts; only owners can write
-  // them (handled in POST above).
+  // them (handled in POST above). Auth gate first to avoid leaking
+  // session existence to unauthenticated callers.
+  const authed = await requireSignedIn();
+  if (!authed.ok) return authed.response;
   const session = await db.getSessionById(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
