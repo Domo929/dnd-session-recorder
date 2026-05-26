@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useState, useEffect } from 'react';
+import { signIn, getProviders } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff, Mail, Lock, User, UserPlus } from 'lucide-react';
@@ -18,7 +18,23 @@ export default function SignUpPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isGoogleEnabled, setIsGoogleEnabled] = useState(false);
   const router = useRouter();
+
+  // Detect which auth providers are configured at runtime. NEXT_PUBLIC_* env
+  // vars are inlined at build time, so they can't reflect deploy-time config
+  // (e.g. Key Vault references resolved by Azure App Service).
+  useEffect(() => {
+    let cancelled = false;
+    getProviders().then((providers) => {
+      if (!cancelled) {
+        setIsGoogleEnabled(providers?.google != null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -85,8 +101,6 @@ export default function SignUpPage() {
       setIsLoading(false);
     }
   };
-
-  const isGoogleEnabled = process.env.NEXT_PUBLIC_GOOGLE_ENABLED === 'true';
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
