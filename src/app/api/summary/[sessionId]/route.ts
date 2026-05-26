@@ -37,7 +37,14 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
-  
+
+  // Auth gate runs before any DB / AI work so unauth callers can't burn
+  // tokens or push the session into 'error' state.
+  const userSession = await getServerSession(authOptions);
+  if (!userSession?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     // Check if session exists
     const session = await db.getSessionById(sessionId);
@@ -48,11 +55,13 @@ export async function POST(
       );
     }
 
-    // Get campaign information to include system prompt
+    // Get campaign information to include system prompt AND verify the
+    // caller owns the campaign. Return 404 on ownership failure to avoid
+    // leaking existence.
     const campaign = await db.getCampaignById(session.campaignId);
-    if (!campaign) {
+    if (!campaign || campaign.userId !== userSession.user.id) {
       return NextResponse.json(
-        { error: 'Campaign not found' },
+        { error: 'Session not found' },
         { status: 404 }
       );
     }
@@ -145,17 +154,33 @@ export async function GET(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
-  
+
+  const userSession = await getServerSession(authOptions);
+  if (!userSession?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Verify the session exists AND the caller owns its campaign before
+  // returning summary text.
+  const gamingSession = await db.getSessionById(sessionId);
+  if (!gamingSession) {
+    return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
+  }
+  const campaign = await db.getCampaignById(gamingSession.campaignId);
+  if (!campaign || campaign.userId !== userSession.user.id) {
+    return NextResponse.json({ error: 'Summary not found' }, { status: 404 });
+  }
+
   try {
     const summary = await db.getSummary(sessionId);
-    
+
     if (!summary) {
       return NextResponse.json(
         { error: 'Summary not found' },
         { status: 404 }
       );
     }
-    
+
     return NextResponse.json(summary);
   } catch (error) {
     console.error('Error fetching summary:', error);
