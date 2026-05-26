@@ -5,6 +5,7 @@ node_modules/
 prisma/data/
 data/
 .claude/
+.worktrees/
 **dist/
 **build/
 **.next/
