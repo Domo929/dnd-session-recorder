@@ -20,7 +20,6 @@ const DEFAULT_OPENAI_TRANSCRIPTION_MODEL = 'whisper-1';
 const DEFAULT_GOOGLE_SUMMARY_MODEL = 'gemini-2.5-flash';
 const DEFAULT_GOOGLE_TRANSCRIPTION_MODEL = 'gemini-2.5-flash';
 const DEFAULT_WHISPER_MODEL = 'base.en';
-const DEFAULT_WHISPER_MODELS_DIR = './whisper-models';
 
 // Inline audio payloads must stay below the Gemini ~20MB request cap.
 // Use the same headroom (18MB) the OpenAI path already uses for Whisper.
@@ -218,14 +217,21 @@ async function transcribeWithGoogle(audioPath: string): Promise<string> {
 
 async function transcribeWithLocalWhisper(audioPath: string): Promise<string> {
   const modelName = process.env.WHISPER_MODEL || DEFAULT_WHISPER_MODEL;
-  const modelRootPath = path.resolve(process.env.WHISPER_MODELS_DIR || DEFAULT_WHISPER_MODELS_DIR);
+  // Only override the model location when the user explicitly sets the env var.
+  // When unset, nodejs-whisper uses its bundled default
+  // (node_modules/nodejs-whisper/cpp/whisper.cpp/models/), which is also where
+  // `npx nodejs-whisper download` puts files — so the two stay in sync without
+  // duplicating downloads.
+  const modelRootPath = process.env.WHISPER_MODELS_DIR
+    ? path.resolve(process.env.WHISPER_MODELS_DIR)
+    : undefined;
   const withCuda = (process.env.WHISPER_USE_CUDA ?? '').toLowerCase() === 'true';
 
   console.log(
-    `[AI] Using local whisper.cpp model: ${modelName} (modelsDir=${modelRootPath}, cuda=${withCuda})`,
+    `[AI] Using local whisper.cpp model: ${modelName} (modelsDir=${modelRootPath ?? '<package default>'}, cuda=${withCuda})`,
   );
 
-  if (!fs.existsSync(modelRootPath)) {
+  if (modelRootPath && !fs.existsSync(modelRootPath)) {
     fs.mkdirSync(modelRootPath, { recursive: true });
   }
 
@@ -246,7 +252,7 @@ async function transcribeWithLocalWhisper(audioPath: string): Promise<string> {
   const result = await nodewhisper(audioPath, {
     modelName,
     autoDownloadModelName: modelName,
-    modelRootPath,
+    ...(modelRootPath ? { modelRootPath } : {}),
     withCuda,
     removeWavFileAfterTranscription: true,
     whisperOptions: {

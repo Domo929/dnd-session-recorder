@@ -144,9 +144,9 @@ Per-provider configuration:
 - Gemini accepts audio as multimodal input; files over ~18 MB are automatically split with ffmpeg into inline-sized chunks. (For very long sessions you may want to use `whisper-local` instead, which handles arbitrary length natively.)
 
 **Local whisper.cpp** (`whisper-local`, transcription only) — runs entirely on your machine, no API key, no data leaves the host.
-- Requires the optional `nodejs-whisper` package to have built successfully (`build-essential`, `cmake`, `git`, `python3` on Linux; Xcode CLT on macOS).
-- Optional: `WHISPER_MODEL` (default `base.en`; other choices include `tiny.en`, `small.en`, `medium.en`, `large-v3`, `large-v3-turbo`), `WHISPER_MODELS_DIR` (default `./whisper-models`), `WHISPER_USE_CUDA=true` if you have a CUDA GPU.
-- The first call for a given model downloads the `ggml-*.bin` weights into `WHISPER_MODELS_DIR`; subsequent calls reuse them.
+- Requires the optional `nodejs-whisper` package to have built successfully (`build-essential`, `cmake` >= 3.18, `git`, `python3` on Linux; Xcode CLT on macOS).
+- One-time setup: `npx nodejs-whisper download` — compiles whisper.cpp (~1–3 min on CPU, longer with CUDA) and prompts you to pick a model. Files land in `node_modules/nodejs-whisper/cpp/whisper.cpp/models/`.
+- Optional: `WHISPER_MODEL` (default `base.en`; other choices include `tiny.en`, `small.en`, `medium.en`, `large-v3`, `large-v3-turbo`), `WHISPER_MODELS_DIR` (override the model location — unset means use nodejs-whisper's bundled default), `WHISPER_USE_CUDA=true` if you have a CUDA GPU and the CUDA Toolkit installed.
 
 Example combinations:
 
