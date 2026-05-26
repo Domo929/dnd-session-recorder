@@ -34,7 +34,15 @@ async function ensureUploadDir() {
 async function getAudioDuration(filePath: string): Promise<number | null> {
   try {
     const execAsync = promisify(exec);
-    const ffprobeBin = './' + (ffprobeStatic.path as string).substring(5);
+    // In production we rely on the system-installed ffprobe (provided by the
+    // `ffmpeg` apk package in the Dockerfile). The `ffprobe-static` binary is
+    // not traced into the Next.js standalone output, so falling through to it
+    // in production silently fails and leaves duration as null. Keep it as a
+    // fallback for local dev where ffmpeg may not be installed system-wide.
+    const ffprobeBin =
+      process.env.NODE_ENV === 'production'
+        ? 'ffprobe'
+        : (ffprobeStatic.path as string);
     const command = `${ffprobeBin} -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`;
     const { stdout } = await execAsync(command);
     const duration = parseFloat(stdout.trim());
