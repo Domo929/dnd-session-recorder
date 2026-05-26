@@ -48,6 +48,12 @@ export async function POST(
       );
     }
 
+    // Uploads are owned by the user who uploaded them, not by the
+    // campaign. We require the caller to be the original uploader; this
+    // is conservative but matches our "owner = creator" data model today
+    // (no co-owner concept yet). If/when co-owners arrive, revisit and
+    // scope uploads to the campaign instead. 404 (not 403) keeps the
+    // leak-prevention pattern consistent with the rest of the API.
     const upload = await db.getUploadById(validatedData.upload_id);
     if (!upload || upload.userId !== access.userId) {
       return NextResponse.json({ error: 'Upload not found' }, { status: 404 });
