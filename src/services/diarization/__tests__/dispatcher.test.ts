@@ -26,6 +26,7 @@ const config: DispatchConfig = {
   subscriptionId: 'sub',
   resourceGroup: 'rg',
   gpuSku: 'T4',
+  huggingFaceToken: null,
 };
 
 interface JobOpts {

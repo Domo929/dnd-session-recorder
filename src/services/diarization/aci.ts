@@ -36,6 +36,7 @@ class AzureAciClient implements AciClient {
     private readonly resourceGroup: string,
     private readonly image: string,
     private readonly gpuSku: string,
+    private readonly huggingFaceToken: string | null,
   ) {}
 
   private async sdk() {
@@ -80,6 +81,11 @@ class AzureAciClient implements AciClient {
               { name: 'AUDIO_URL', secureValue: args.audioUrl },
               { name: 'CALLBACK_URL', value: args.callbackUrl },
               { name: 'HMAC_SECRET', secureValue: args.hmacSecret },
+              // pyannote 3.1 is a gated HF model; the token (when configured)
+              // lets the container download it at runtime.
+              ...(this.huggingFaceToken
+                ? [{ name: 'HUGGINGFACE_TOKEN', secureValue: this.huggingFaceToken }]
+                : []),
             ],
           },
         ],
@@ -121,5 +127,11 @@ export function createAciClient(config: DispatchConfig): AciClient | null {
     logger.info('[diarization] ACI client not configured; dispatcher dormant');
     return null;
   }
-  return new AzureAciClient(config.subscriptionId, config.resourceGroup, config.image, config.gpuSku);
+  return new AzureAciClient(
+    config.subscriptionId,
+    config.resourceGroup,
+    config.image,
+    config.gpuSku,
+    config.huggingFaceToken,
+  );
 }
