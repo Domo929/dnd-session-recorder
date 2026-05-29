@@ -68,6 +68,11 @@ export abstract class BlobStorageServiceBase implements StorageService {
     }
   }
 
+  async uploadFile(blobPath: string, localPath: string): Promise<void> {
+    await this.ensureContainer();
+    await this.container().getBlockBlobClient(blobPath).uploadFile(localPath);
+  }
+
   async materializeToTempFile(blobPath: string): Promise<string> {
     const tempPath = path.join(os.tmpdir(), `${randomUUID()}${path.extname(blobPath)}`);
     await this.container().getBlockBlobClient(blobPath).downloadToFile(tempPath);

@@ -34,6 +34,13 @@ export class LocalDiskStorageService implements StorageService {
     );
   }
 
+  async uploadFile(_blobPath: string, _localPath: string): Promise<void> {
+    throw new Error(
+      'Local storage backend cannot upload to blob storage. Configure a real ' +
+        'storage account (AZURE_BLOB_ACCOUNT_NAME) to run the migration script.',
+    );
+  }
+
   async head(blobPath: string): Promise<BlobHead> {
     try {
       const stat = await fs.promises.stat(blobPath);

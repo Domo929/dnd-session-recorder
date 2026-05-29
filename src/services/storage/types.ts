@@ -31,6 +31,12 @@ export interface StorageService {
   /** Verify a previously-issued upload actually landed. Returns the real size. */
   head(blobPath: string): Promise<BlobHead>;
 
+  /**
+   * Upload a local file to an explicit blob path (server-side, no browser SAS).
+   * Used by the local→blob migration script. Fails closed on the local backend.
+   */
+  uploadFile(blobPath: string, localPath: string): Promise<void>;
+
   /** Download to a unique temp path. Caller must delete when done. */
   materializeToTempFile(blobPath: string): Promise<string>;
 
