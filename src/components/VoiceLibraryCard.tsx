@@ -63,6 +63,9 @@ export default function VoiceLibraryCard({ campaignId }: { campaignId: string })
     return () => {
       stopTimer();
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        // Drop the onstop handler first so unmounting doesn't finalize/upload
+        // a recording the user is abandoning.
+        recorderRef.current.onstop = null;
         recorderRef.current.stop();
       }
       releaseStream();
