@@ -128,9 +128,11 @@ export async function POST(
       { status: 201 },
     );
   } catch (err) {
+    // The row is only created on the success path (no throw between create and
+    // the response), so on any failure here the verified blob is an orphan.
+    await storage.delete(blobPath).catch(() => {});
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      // Duplicate (memberId, label): the row was never created, so drop the blob.
-      await storage.delete(blobPath).catch(() => {});
+      // Duplicate (memberId, label): the row was never created.
       return NextResponse.json(
         { error: 'You already have a voice sample with that label.' },
         { status: 409 },
