@@ -10,7 +10,8 @@ import { ProcessingPipeline } from './components/processing-pipeline';
 import { ErrorBanner } from './components/error-banner';
 import { UploadSection } from './components/upload-section';
 import { SummarySection } from './components/summary-section';
-import { TranscriptSection } from './components/transcript-section';
+import { SpeakerTranscriptSection } from './components/speaker-transcript-section';
+import { ResummarizeBanner } from './components/resummarize-banner';
 import { DMTodoPanel } from './components/dm-todo-panel';
 import { DeleteSessionModal } from './components/delete-session-modal';
 import { ThemeSelector } from './components/theme-selector';
@@ -230,19 +231,23 @@ function SessionDetailPage() {
             {/* Tab content */}
             <div style={{ animation: 'ss-fade 200ms ease' }}>
               {activeTab === 'summary' && (
-                <SummarySection
-                  summary={summary}
-                  sessionStatus={session.status}
-                  onSave={(text) => updateSummaryMutation.mutate(text)}
-                  onRegenerate={() => generateSummaryMutation.mutate()}
-                  isSaving={updateSummaryMutation.isPending}
-                  isRegenerating={generateSummaryMutation.isPending}
-                  hasTranscriptions={transcriptions.length > 0}
-                />
+                <>
+                  <ResummarizeBanner sessionId={sessionId} />
+                  <SummarySection
+                    summary={summary}
+                    sessionStatus={session.status}
+                    onSave={(text) => updateSummaryMutation.mutate(text)}
+                    onRegenerate={() => generateSummaryMutation.mutate()}
+                    isSaving={updateSummaryMutation.isPending}
+                    isRegenerating={generateSummaryMutation.isPending}
+                    hasTranscriptions={transcriptions.length > 0}
+                  />
+                </>
               )}
 
               {activeTab === 'transcript' && (
-                <TranscriptSection
+                <SpeakerTranscriptSection
+                  sessionId={sessionId}
                   transcriptions={transcriptions}
                   sessionStatus={session.status}
                 />

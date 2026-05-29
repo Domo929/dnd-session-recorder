@@ -37,7 +37,7 @@ export function isAiMocked(): boolean {
   return process.env.MOCK_AI_SERVICES === 'true';
 }
 
-export type AiTextKind = 'summary' | 'dm-todo';
+export type AiTextKind = 'summary' | 'dm-todo' | 'npc-inference';
 
 type TranscriptionProvider = 'openai' | 'google' | 'whisper-local';
 type SummaryProvider = 'openai' | 'google';
@@ -78,6 +78,8 @@ const MOCK_TEXT: Record<AiTextKind, string> = {
     '- [ ] Decide what the Sunstone Amulet does mechanically\n' +
     '- [ ] Prepare the crypt guardian for next session\n' +
     "- [ ] Follow up on the glyph of warding's origin",
+  // Mock returns an empty suggestion array so mocked/test runs make no claims.
+  'npc-inference': '[]',
 };
 
 /**
