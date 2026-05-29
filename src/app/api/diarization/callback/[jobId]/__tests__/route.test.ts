@@ -41,6 +41,7 @@ function callbackRequest(jobId: string, body: string, signature: string | null) 
 const job = {
   id: 'job_1',
   sessionId: 'sess_1',
+  status: 'queued',
   hmacSecret: SECRET,
   session: { id: 'sess_1', campaignId: 'camp_1', uploadId: 'upl_1' },
 };
@@ -55,7 +56,7 @@ beforeEach(() => {
     getUploadById: vi.fn(async () => ({ id: 'upl_1', path: 'uploads/u/x.m4a' })),
     upsertSpeakerCluster: vi.fn(async (d: { clusterIdx: number }) => ({ id: `cl_${d.clusterIdx}` })),
     addLearnedExemplar: vi.fn(async () => {}),
-    replaceSpeakerLabeledTranscriptions: vi.fn(async () => {}),
+    completeDiarizationJob: vi.fn(async () => {}),
     setSessionDiarizationStatus: vi.fn(async () => {}),
     updateDiarizationJob: vi.fn(async () => job),
   });
@@ -103,6 +104,16 @@ describe('POST /api/diarization/callback/[jobId]', () => {
     expect(db.upsertSpeakerCluster).not.toHaveBeenCalled();
   });
 
+  it('409 when the job is already finished (replay guard)', async () => {
+    vi.mocked(db.getDiarizationJobById).mockResolvedValueOnce({ ...job, status: 'completed' } as never);
+    const body = payloadWith([matchedCluster], [{ startMs: 0, endMs: 1000, text: 'hi', clusterIdx: 0 }]);
+    const { req, ctx } = callbackRequest('job_1', body, sign(body));
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(409);
+    expect(db.upsertSpeakerCluster).not.toHaveBeenCalled();
+    expect(db.completeDiarizationJob).not.toHaveBeenCalled();
+  });
+
   it('400 on an invalid payload', async () => {
     const body = JSON.stringify({ clusters: [], segments: [] });
     const { req, ctx } = callbackRequest('job_1', body, sign(body));
@@ -130,11 +141,12 @@ describe('POST /api/diarization/callback/[jobId]', () => {
     expect(learned.source).toBe('auto_matched');
     expect(learned.sourceSessionId).toBe('sess_1');
 
-    expect(db.replaceSpeakerLabeledTranscriptions).toHaveBeenCalledWith('sess_1', [
-      { startTime: 0, endTime: 2, text: 'hello there', confidence: 0.9, speakerClusterId: 'cl_0' },
-    ]);
-    expect(db.setSessionDiarizationStatus).toHaveBeenCalledWith('sess_1', 'completed', {
-      needsResummarize: true,
+    expect(db.completeDiarizationJob).toHaveBeenCalledWith({
+      sessionId: 'sess_1',
+      jobId: 'job_1',
+      rows: [
+        { startTime: 0, endTime: 2, text: 'hello there', confidence: 0.9, speakerClusterId: 'cl_0' },
+      ],
     });
   });
 

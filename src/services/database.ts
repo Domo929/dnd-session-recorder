@@ -776,22 +776,39 @@ export class DatabaseService {
     });
   }
 
-  /** Replace a session's transcriptions with speaker-attributed segments. */
-  async replaceSpeakerLabeledTranscriptions(
-    sessionId: string,
-    rows: { startTime: number; endTime: number; text: string; confidence: number | null; speakerClusterId: string }[],
-  ): Promise<void> {
+  /**
+   * Atomically finalize a completed diarization run: replace the session's
+   * transcriptions with the speaker-attributed segments, mark the session
+   * completed + needing re-summarization, and complete the job — all in one
+   * transaction so a crash can't leave the session and job in disagreeing
+   * states.
+   */
+  async completeDiarizationJob(args: {
+    sessionId: string;
+    jobId: string;
+    rows: { startTime: number; endTime: number; text: string; confidence: number | null; speakerClusterId: string }[];
+  }): Promise<void> {
     await prisma.$transaction(async (tx) => {
-      await tx.transcription.deleteMany({ where: { sessionId } });
-      await tx.transcription.createMany({
-        data: rows.map((r) => ({
-          sessionId,
-          startTime: r.startTime,
-          endTime: r.endTime,
-          text: r.text,
-          confidence: r.confidence,
-          speakerClusterId: r.speakerClusterId,
-        })),
+      await tx.transcription.deleteMany({ where: { sessionId: args.sessionId } });
+      if (args.rows.length > 0) {
+        await tx.transcription.createMany({
+          data: args.rows.map((r) => ({
+            sessionId: args.sessionId,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            text: r.text,
+            confidence: r.confidence,
+            speakerClusterId: r.speakerClusterId,
+          })),
+        });
+      }
+      await tx.gamingSession.update({
+        where: { id: args.sessionId },
+        data: { diarizationStatus: 'completed', needsResummarize: true },
+      });
+      await tx.diarizationJob.update({
+        where: { id: args.jobId },
+        data: { status: 'completed', finishedAt: new Date(), attemptCount: { increment: 1 } },
       });
     });
   }

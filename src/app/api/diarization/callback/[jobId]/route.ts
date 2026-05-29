@@ -54,6 +54,13 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
+  // Replay guard: a finished job must not be reprocessed. Transcription
+  // replacement is destructive, so a stale replay could clobber good data.
+  if (job.status === 'completed' || job.status === 'failed') {
+    logger.warn('Diarization callback for an already-finished job', { jobId, status: job.status });
+    return NextResponse.json({ error: 'Job already processed' }, { status: 409 });
+  }
+
   let json: unknown;
   try {
     json = JSON.parse(rawBody);
@@ -189,14 +196,7 @@ export async function POST(
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    await db.replaceSpeakerLabeledTranscriptions(sessionId, rows);
-
-    await db.setSessionDiarizationStatus(sessionId, 'completed', { needsResummarize: true });
-    await db.updateDiarizationJob(jobId, {
-      status: 'completed',
-      finishedAt: new Date(),
-      incrementAttempt: true,
-    });
+    await db.completeDiarizationJob({ sessionId, jobId, rows });
 
     logger.info('Diarization callback processed', {
       jobId,
