@@ -9,6 +9,7 @@ vi.mock('fluent-ffmpeg', () => {
   const ffmpegInstance = {
     setStartTime: vi.fn().mockReturnThis(),
     setDuration: vi.fn().mockReturnThis(),
+    outputOptions: vi.fn().mockReturnThis(),
     output: vi.fn().mockReturnThis(),
     on: vi.fn().mockImplementation(function (this: Record<string, unknown>, event: string, cb: () => void) {
       if (event === 'end') {
@@ -26,6 +27,8 @@ vi.mock('fluent-ffmpeg', () => {
   const ffmpegFn: ReturnType<typeof vi.fn> & { ffprobe: typeof ffprobeMock } = Object.assign(
     vi.fn(() => ({
       ...ffmpegInstance,
+      outputOptions: vi.fn().mockReturnThis(),
+      output: vi.fn().mockReturnThis(),
       // Each call gets fresh on/run so callbacks don't collide
       on: vi.fn().mockImplementation(function (this: Record<string, unknown>, event: string, cb: () => void) {
         if (event === 'end') this._endCb = cb;
@@ -192,6 +195,31 @@ describe('audioProcessing', () => {
   });
 
   describe('getAudioDuration', () => {
+    // Drives the decode fallback: ffmpeg() emits one `progress` event with the
+    // given timemark (or none when null), then `end`.
+    function mockDecodeWithTimemark(timemark: string | null) {
+      const ffmpegFn = ffmpeg as unknown as ReturnType<typeof vi.fn>;
+      ffmpegFn.mockImplementation(() => {
+        const instance: Record<string, unknown> = {};
+        const ret = () => instance;
+        instance.outputOptions = ret;
+        instance.output = ret;
+        instance.on = (event: string, cb: (arg?: unknown) => void) => {
+          if (event === 'end') instance._endCb = cb;
+          if (event === 'error') instance._errorCb = cb;
+          if (event === 'progress') instance._progressCb = cb;
+          return instance;
+        };
+        instance.run = () => {
+          if (timemark && typeof instance._progressCb === 'function') {
+            (instance._progressCb as (arg: { timemark: string }) => void)({ timemark });
+          }
+          if (typeof instance._endCb === 'function') (instance._endCb as () => void)();
+        };
+        return instance;
+      });
+    }
+
     it('returns duration from ffprobe', async () => {
       const ffprobeMock = ffmpeg.ffprobe as unknown as ReturnType<typeof vi.fn>;
       ffprobeMock.mockImplementation((_path: string, cb: (err: Error | null, metadata: { format: { duration: number } }) => void) => {
@@ -213,11 +241,23 @@ describe('audioProcessing', () => {
       );
     });
 
-    it('rejects when duration is missing', async () => {
+    it('falls back to decoding when the container reports no duration', async () => {
       const ffprobeMock = ffmpeg.ffprobe as unknown as ReturnType<typeof vi.fn>;
       ffprobeMock.mockImplementation((_path: string, cb: (err: Error | null, metadata: { format: { duration?: number } }) => void) => {
         cb(null, { format: {} });
       });
+      mockDecodeWithTimemark('00:00:12.34');
+
+      const duration = await getAudioDuration('/some/recorder.webm');
+      expect(duration).toBeCloseTo(12.34, 2);
+    });
+
+    it('rejects when neither ffprobe nor decoding yield a duration', async () => {
+      const ffprobeMock = ffmpeg.ffprobe as unknown as ReturnType<typeof vi.fn>;
+      ffprobeMock.mockImplementation((_path: string, cb: (err: Error | null, metadata: { format: { duration?: number } }) => void) => {
+        cb(null, { format: {} });
+      });
+      mockDecodeWithTimemark(null);
 
       await expect(getAudioDuration('/some/file.mp3')).rejects.toThrow(
         'Could not determine audio duration'
