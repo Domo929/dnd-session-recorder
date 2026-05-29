@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
 import { splitAudioBySize, cleanupChunkFiles } from '@/services/audioProcessing';
-import { transcribeAudio, isAiMocked } from '@/lib/ai';
+import { transcribeAudio, isAiMocked, maxTranscriptionChunkSizeMB } from '@/lib/ai';
 import { isTestAccount } from '@/lib/whitelist';
 import fs from 'fs';
 import { logger } from '@/lib/logger';
@@ -151,8 +151,8 @@ export async function POST(
       transcriptionProgress: 5,
     });
 
-    // Split audio into 18MB chunks (under Whisper's 25MB limit)
-    const chunks = await splitAudioBySize(fullPath, { maxChunkSizeMB: 18 });
+    // Split audio into provider-sized chunks (under each provider's request limit)
+    const chunks = await splitAudioBySize(fullPath, { maxChunkSizeMB: maxTranscriptionChunkSizeMB() });
     const chunkPaths = chunks.map(c => c.path);
     logger.info('Audio split into chunks', {
       sessionId,

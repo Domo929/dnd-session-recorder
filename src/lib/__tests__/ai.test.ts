@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { isAiMocked, transcribeAudio, generateAiText } from '@/lib/ai';
+import { isAiMocked, transcribeAudio, generateAiText, maxTranscriptionChunkSizeMB } from '@/lib/ai';
 
 describe('ai service wrapper (mock mode)', () => {
   beforeEach(() => {
@@ -51,5 +51,33 @@ describe('ai service wrapper (mock mode)', () => {
       const b = await generateAiText('prompt B', 'summary');
       expect(a.text).toEqual(b.text);
     });
+  });
+});
+
+describe('transcription provider selection (maxTranscriptionChunkSizeMB)', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to 18MB chunks (openai/whisper)', () => {
+    expect(maxTranscriptionChunkSizeMB()).toBe(18);
+    vi.stubEnv('AI_TRANSCRIPTION_PROVIDER', 'openai');
+    expect(maxTranscriptionChunkSizeMB()).toBe(18);
+    vi.stubEnv('AI_TRANSCRIPTION_PROVIDER', 'whisper-local');
+    expect(maxTranscriptionChunkSizeMB()).toBe(18);
+  });
+
+  it('uses smaller 14MB chunks for google (Gemini inline request limit)', () => {
+    vi.stubEnv('AI_TRANSCRIPTION_PROVIDER', 'google');
+    expect(maxTranscriptionChunkSizeMB()).toBe(14);
+  });
+
+  it('falls back to the default for unknown providers', () => {
+    vi.stubEnv('AI_TRANSCRIPTION_PROVIDER', 'not-a-provider');
+    expect(maxTranscriptionChunkSizeMB()).toBe(18);
   });
 });
