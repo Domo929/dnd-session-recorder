@@ -61,6 +61,30 @@ function createChunk(
 }
 
 /**
+ * Extract a short clip from an audio file (used for unknown-speaker snippets).
+ * Re-encodes to Opus in an Ogg container so the clip is small and broadly
+ * playable. `startSec`/`durationSec` are clamped to non-negative.
+ */
+export function extractAudioClip(
+  inputPath: string,
+  outputPath: string,
+  startSec: number,
+  durationSec: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .setStartTime(Math.max(0, startSec))
+      .setDuration(Math.max(0, durationSec))
+      .audioCodec('libopus')
+      .format('ogg')
+      .output(outputPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(new Error(`FFmpeg error: ${err.message}`)))
+      .run();
+  });
+}
+
+/**
  * Split an audio file into chunks by size.
  *
  * Uses FFmpeg to split audio files into approximately equal chunks
