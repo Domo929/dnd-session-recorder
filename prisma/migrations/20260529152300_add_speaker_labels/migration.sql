@@ -10,6 +10,9 @@ CREATE TYPE "InferenceStatus" AS ENUM ('none', 'pending', 'completed', 'failed')
 -- CreateEnum
 CREATE TYPE "VoiceSampleSource" AS ENUM ('enrolled', 'tagged_from_cluster');
 
+-- CreateEnum
+CREATE TYPE "VoiceExemplarSource" AS ENUM ('enrolled', 'auto_matched', 'dm_confirmed', 'tagged_from_cluster');
+
 -- AlterTable
 ALTER TABLE "campaigns" ADD COLUMN     "default_transcription_mode" "TranscriptionMode" NOT NULL DEFAULT 'basic',
 ADD COLUMN     "diarization_enabled" BOOLEAN NOT NULL DEFAULT true,
@@ -35,9 +38,26 @@ CREATE TABLE "voice_samples" (
     "duration_ms" INTEGER NOT NULL,
     "source" "VoiceSampleSource" NOT NULL DEFAULT 'enrolled',
     "original_cluster_id" TEXT,
+    "exemplar_count" INTEGER NOT NULL DEFAULT 1,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "voice_samples_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "voice_exemplars" (
+    "id" TEXT NOT NULL,
+    "voice_sample_id" TEXT NOT NULL,
+    "embedding" BYTEA NOT NULL,
+    "embedding_model" TEXT NOT NULL,
+    "source" "VoiceExemplarSource" NOT NULL DEFAULT 'enrolled',
+    "pinned" BOOLEAN NOT NULL DEFAULT false,
+    "source_session_id" TEXT,
+    "similarity_at_capture" DOUBLE PRECISION,
+    "duration_ms" INTEGER NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "voice_exemplars_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -53,6 +73,8 @@ CREATE TABLE "session_speaker_clusters" (
     "total_duration_ms" INTEGER NOT NULL,
     "voice_sample_id" TEXT,
     "display_label" TEXT NOT NULL,
+    "match_confidence" TEXT NOT NULL DEFAULT 'none',
+    "matched_score" DOUBLE PRECISION,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "session_speaker_clusters_pkey" PRIMARY KEY ("id")
@@ -100,6 +122,12 @@ CREATE INDEX "voice_samples_member_id_idx" ON "voice_samples"("member_id");
 CREATE UNIQUE INDEX "voice_samples_member_id_label_key" ON "voice_samples"("member_id", "label");
 
 -- CreateIndex
+CREATE INDEX "voice_exemplars_voice_sample_id_idx" ON "voice_exemplars"("voice_sample_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "voice_exemplars_voice_sample_id_source_session_id_key" ON "voice_exemplars"("voice_sample_id", "source_session_id");
+
+-- CreateIndex
 CREATE INDEX "session_speaker_clusters_voice_sample_id_idx" ON "session_speaker_clusters"("voice_sample_id");
 
 -- CreateIndex
@@ -122,6 +150,9 @@ ALTER TABLE "transcriptions" ADD CONSTRAINT "transcriptions_speaker_cluster_id_f
 
 -- AddForeignKey
 ALTER TABLE "voice_samples" ADD CONSTRAINT "voice_samples_member_id_fkey" FOREIGN KEY ("member_id") REFERENCES "members"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "voice_exemplars" ADD CONSTRAINT "voice_exemplars_voice_sample_id_fkey" FOREIGN KEY ("voice_sample_id") REFERENCES "voice_samples"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "session_speaker_clusters" ADD CONSTRAINT "session_speaker_clusters_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "gaming_sessions"("id") ON DELETE CASCADE ON UPDATE CASCADE;

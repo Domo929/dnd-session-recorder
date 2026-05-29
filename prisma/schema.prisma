@@ -300,27 +300,61 @@ enum VoiceSampleSource {
   tagged_from_cluster // promoted from a diarized cluster after the DM tagged it
 }
 
+// Provenance of a single exemplar embedding within a voice's fingerprint.
+enum VoiceExemplarSource {
+  enrolled // the original recorded enrollment seed (pinned)
+  auto_matched // learned from a high-confidence automatic match (>= LEARN_THRESHOLD)
+  dm_confirmed // learned after the DM explicitly confirmed/tagged a cluster
+  tagged_from_cluster // seeded from a lazy-tagged unknown cluster
+}
+
 // A labeled voice belonging to a campaign member: a player character voice
-// ("Thorin", "Thorin (drunk)"), the DM narrator, or a recurring NPC. Each row
-// stores a 192-dim ECAPA-TDNN embedding (float32 little-endian, 768 bytes).
+// ("Thorin", "Thorin (drunk)"), the DM narrator, or a recurring NPC. Each voice
+// is a self-refining "fingerprint": a capped set of VoiceExemplar embeddings.
+// The legacy `embedding` column is retained as the canonical, pinned seed.
 model VoiceSample {
   id                String            @id @default(cuid())
   memberId          String            @map("member_id")
   label             String // "Thorin", "Narrator", "Skritch"
   audioPath         String            @map("audio_path") // Blob path in voice-samples
-  embedding         Bytes // 192 * float32 = 768 bytes
+  embedding         Bytes // 192 * float32 = 768 bytes; the pinned seed exemplar
   embeddingModel    String            @map("embedding_model") // "ecapa-tdnn-v1"
   durationMs        Int               @map("duration_ms")
   source            VoiceSampleSource @default(enrolled)
   originalClusterId String?           @map("original_cluster_id") // set when source = tagged_from_cluster
+  exemplarCount     Int               @default(1) @map("exemplar_count") // capped at MAX_EXEMPLARS_PER_VOICE
   createdAt         DateTime          @default(now()) @map("created_at")
 
-  member   Member                  @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  clusters SessionSpeakerCluster[]
+  member    Member                  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  clusters  SessionSpeakerCluster[]
+  exemplars VoiceExemplar[]
 
   @@unique([memberId, label])
   @@index([memberId])
   @@map("voice_samples")
+}
+
+// A single embedding within a voice's fingerprint. The original enrollment is
+// `pinned` and never evicted; high-confidence session matches accrete as
+// unpinned exemplars (oldest unpinned evicted past the per-voice cap). Matching
+// scores a cluster as max(cosine) over a voice's exemplars.
+model VoiceExemplar {
+  id                  String              @id @default(cuid())
+  voiceSampleId       String              @map("voice_sample_id")
+  embedding           Bytes // 192 * float32 = 768 bytes
+  embeddingModel      String              @map("embedding_model") // "ecapa-tdnn-v1"
+  source              VoiceExemplarSource @default(enrolled)
+  pinned              Boolean             @default(false) // true only for the enrollment seed
+  sourceSessionId     String?             @map("source_session_id") // session this exemplar was learned from
+  similarityAtCapture Float?              @map("similarity_at_capture") // match score when learned
+  durationMs          Int                 @map("duration_ms")
+  createdAt           DateTime            @default(now()) @map("created_at")
+
+  voiceSample VoiceSample @relation(fields: [voiceSampleId], references: [id], onDelete: Cascade)
+
+  @@unique([voiceSampleId, sourceSessionId]) // idempotent: one exemplar per source session
+  @@index([voiceSampleId])
+  @@map("voice_exemplars")
 }
 
 // One diarized speaker within a single session, with its mean embedding and the
@@ -338,6 +372,8 @@ model SessionSpeakerCluster {
   totalDurationMs   Int       @map("total_duration_ms")
   voiceSampleId     String?   @map("voice_sample_id") // matched OR after manual tag
   displayLabel      String    @map("display_label") // "Thorin", "DM (narration)", "DM (Unknown #2)"
+  matchConfidence   String    @default("none") @map("match_confidence") // high | low | none
+  matchedScore      Float?    @map("matched_score") // best cosine score, for transparency
   createdAt         DateTime  @default(now()) @map("created_at")
 
   session        GamingSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
