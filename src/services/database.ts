@@ -739,6 +739,112 @@ export class DatabaseService {
     });
   }
 
+  /** Count diarization jobs currently in the `running` state (system-wide). */
+  async countRunningDiarizationJobs(): Promise<number> {
+    return prisma.diarizationJob.count({ where: { status: 'running' } });
+  }
+
+  /** Count `running` diarization jobs whose session belongs to a campaign. */
+  async countRunningDiarizationJobsByCampaign(campaignId: string): Promise<number> {
+    return prisma.diarizationJob.count({
+      where: { status: 'running', session: { campaignId } },
+    });
+  }
+
+  /**
+   * Sum the estimated cost of jobs started on/after `since` (the daily-budget
+   * accumulator). Only running/completed jobs carry a committed cost estimate.
+   */
+  async sumDiarizationCostSince(since: Date): Promise<number> {
+    const result = await prisma.diarizationJob.aggregate({
+      _sum: { costEstimateUsd: true },
+      where: { startedAt: { gte: since } },
+    });
+    return result._sum.costEstimateUsd ? Number(result._sum.costEstimateUsd) : 0;
+  }
+
+  /**
+   * Oldest-first queued jobs awaiting dispatch, with the session campaignId +
+   * upload (path/storage) the dispatcher needs to mint a read SAS.
+   */
+  async listQueuedDiarizationJobs(
+    limit = 20,
+  ): Promise<
+    (DiarizationJob & { session: GamingSession & { upload: Upload | null } })[]
+  > {
+    return prisma.diarizationJob.findMany({
+      where: { status: 'queued' },
+      include: { session: { include: { upload: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+  }
+
+  /**
+   * Atomically claim a queued job for dispatch by flipping it queued -> running.
+   * Returns true iff this caller won the claim (guards against double-dispatch
+   * by concurrent dispatcher ticks). Does NOT yet set aci/region/cost — the
+   * caller fills those in once a container is accepted, or reverts on failure.
+   */
+  async claimDiarizationJobForDispatch(jobId: string): Promise<boolean> {
+    const { count } = await prisma.diarizationJob.updateMany({
+      where: { id: jobId, status: 'queued' },
+      data: { status: 'running', startedAt: new Date(), attemptCount: { increment: 1 } },
+    });
+    if (count > 0) {
+      const job = await prisma.diarizationJob.findUnique({
+        where: { id: jobId },
+        select: { sessionId: true },
+      });
+      if (job) {
+        await prisma.gamingSession.update({
+          where: { id: job.sessionId },
+          data: { diarizationStatus: 'running' },
+        });
+      }
+    }
+    return count > 0;
+  }
+
+  /** Running jobs that have an ACI resource (cleanup-loop candidates). */
+  async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {
+    return prisma.diarizationJob.findMany({
+      where: { status: 'running', aciResourceId: { not: null } },
+    });
+  }
+
+  /**
+   * Revert a failed dispatch attempt back to `queued` so a later tick can retry
+   * (used when no region accepted the container). Clears any partial aci/region.
+   */
+  async revertDiarizationJobToQueued(jobId: string): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const job = await tx.diarizationJob.update({
+        where: { id: jobId },
+        data: { status: 'queued', aciResourceId: null, region: null, startedAt: null },
+      });
+      await tx.gamingSession.update({
+        where: { id: job.sessionId },
+        data: { diarizationStatus: 'queued' },
+      });
+    });
+  }
+
+  /** Permanently fail a diarization job and mirror the status onto its session. */
+  async failDiarizationJob(jobId: string, errorMessage: string): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const job = await tx.diarizationJob.update({
+        where: { id: jobId },
+        data: { status: 'failed', finishedAt: new Date(), errorMessage },
+      });
+      await tx.gamingSession.update({
+        where: { id: job.sessionId },
+        data: { diarizationStatus: 'failed' },
+      });
+    });
+  }
+
+
   /**
    * All voices in a campaign as match-ready fingerprints: each voice's seed
    * embedding followed by its learned exemplars (per the self-refining design).

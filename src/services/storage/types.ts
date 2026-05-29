@@ -9,6 +9,13 @@ export interface IssuedUpload {
   expiresAt: Date;
 }
 
+export interface IssuedReadUrl {
+  /** Time-limited read-only URL (e.g. for the diarization container to curl). */
+  url: string;
+  /** When `url` stops working. */
+  expiresAt: Date;
+}
+
 export interface BlobHead {
   exists: boolean;
   /** Size in bytes; 0 when the blob does not exist. */
@@ -27,6 +34,13 @@ export interface StorageService {
 
   /** Issue a time-limited upload URL the browser can PUT directly to. */
   issueUploadUrl(opts: IssueUploadOptions): Promise<IssuedUpload>;
+
+  /**
+   * Issue a time-limited, read-only URL for an existing blob (e.g. for the
+   * diarization container to download the session audio). Fails closed on the
+   * local backend.
+   */
+  issueReadUrl(blobPath: string, ttlMs: number): Promise<IssuedReadUrl>;
 
   /**
    * Issue a time-limited upload URL for an explicit, caller-chosen blob path

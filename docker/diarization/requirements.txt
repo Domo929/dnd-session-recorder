@@ -1,0 +1,10 @@
+# Diarization GPU container dependencies (design §4).
+# Pinned to known-compatible majors; the deploy environment owns exact lockstep.
+pyannote.audio==3.1.1
+faster-whisper==1.0.3
+speechbrain==1.0.0
+torch==2.2.2
+torchaudio==2.2.2
+numpy==1.26.4
+requests==2.32.3
+soundfile==0.12.1

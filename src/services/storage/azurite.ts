@@ -72,4 +72,18 @@ export class AzuriteStorageService extends BlobStorageServiceBase {
       this.sharedKey,
     ).toString();
   }
+
+  protected async mintReadSas(blobPath: string, startsOn: Date, expiresOn: Date): Promise<string> {
+    return generateBlobSASQueryParameters(
+      {
+        containerName: this.containerName,
+        blobName: blobPath,
+        permissions: BlobSASPermissions.from({ read: true }),
+        startsOn,
+        expiresOn,
+        protocol: SASProtocol.HttpsAndHttp,
+      },
+      this.sharedKey,
+    ).toString();
+  }
 }

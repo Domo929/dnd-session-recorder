@@ -15,6 +15,7 @@ import {
   UPLOAD_URL_TTL_MS,
   type BlobHead,
   type IssueUploadOptions,
+  type IssuedReadUrl,
   type IssuedUpload,
   type StorageBackend,
   type StorageService,
@@ -60,6 +61,13 @@ export abstract class BlobStorageServiceBase implements StorageService {
     expiresOn: Date,
   ): Promise<string>;
 
+  /** Mint a single-blob, read-only SAS query string for `blobPath`. */
+  protected abstract mintReadSas(
+    blobPath: string,
+    startsOn: Date,
+    expiresOn: Date,
+  ): Promise<string>;
+
   /** Whether the container must be created on demand before issuing a URL. */
   protected get ensureContainerBeforeUpload(): boolean {
     return false;
@@ -77,6 +85,14 @@ export abstract class BlobStorageServiceBase implements StorageService {
 
   issueUploadUrlForPath(blobPath: string): Promise<IssuedUpload> {
     return this.composeUpload(blobPath);
+  }
+
+  async issueReadUrl(blobPath: string, ttlMs: number): Promise<IssuedReadUrl> {
+    const startsOn = new Date(Date.now() - 5 * 60 * 1000); // 5 min skew tolerance
+    const expiresAt = new Date(Date.now() + ttlMs);
+    const sas = await this.mintReadSas(blobPath, startsOn, expiresAt);
+    const url = `${this.container().getBlockBlobClient(blobPath).url}?${sas}`;
+    return { url, expiresAt };
   }
 
   /** Builds the namespaced blob path + a fresh `{timestamp}-{uuid}` filename. */
@@ -147,6 +163,22 @@ export class AzureBlobStorageService extends BlobStorageServiceBase {
         containerName: this.containerName,
         blobName: blobPath,
         permissions: BlobSASPermissions.from({ create: true, write: true }),
+        startsOn,
+        expiresOn,
+        protocol: SASProtocol.Https,
+      },
+      userDelegationKey,
+      this.accountName,
+    ).toString();
+  }
+
+  protected async mintReadSas(blobPath: string, startsOn: Date, expiresOn: Date): Promise<string> {
+    const userDelegationKey = await this.client.getUserDelegationKey(startsOn, expiresOn);
+    return generateBlobSASQueryParameters(
+      {
+        containerName: this.containerName,
+        blobName: blobPath,
+        permissions: BlobSASPermissions.from({ read: true }),
         startsOn,
         expiresOn,
         protocol: SASProtocol.Https,

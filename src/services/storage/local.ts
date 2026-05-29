@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import type {
   BlobHead,
   IssueUploadOptions,
+  IssuedReadUrl,
   IssuedUpload,
   StorageBackend,
   StorageService,
@@ -39,6 +40,13 @@ export class LocalDiskStorageService implements StorageService {
       'Local storage backend cannot issue browser upload URLs. Configure Azurite ' +
         '(AZURE_STORAGE_CONNECTION_STRING) for local development or a real storage ' +
         'account (AZURE_BLOB_ACCOUNT_NAME) for production.',
+    );
+  }
+
+  async issueReadUrl(_blobPath: string, _ttlMs: number): Promise<IssuedReadUrl> {
+    throw new Error(
+      'Local storage backend cannot issue read URLs. Configure a real storage ' +
+        'account (AZURE_BLOB_ACCOUNT_NAME) so the diarization container can fetch audio.',
     );
   }
 
