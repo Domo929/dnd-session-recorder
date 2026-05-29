@@ -1,7 +1,10 @@
 # Use Node.js LTS Alpine image for minimal size
 FROM node:22-alpine AS base
 
-# Install dependencies needed for ffprobe and other tools
+# Install dependencies needed for ffprobe and other tools.
+# cmake + git are also required to build the optional "nodejs-whisper"
+# package (whisper.cpp) used by AI_TRANSCRIPTION_PROVIDER=whisper-local.
+# They are harmless if that provider is unused.
 RUN apk add --no-cache \
     ffmpeg \
     sqlite \
@@ -10,6 +13,8 @@ RUN apk add --no-cache \
     python3 \
     make \
     g++ \
+    cmake \
+    git \
     && rm -rf /var/cache/apk/*
 
 # Set working directory
