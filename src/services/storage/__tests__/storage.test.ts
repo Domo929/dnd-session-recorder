@@ -77,6 +77,12 @@ describe('LocalDiskStorageService', () => {
     ).rejects.toThrow(/cannot issue browser upload URLs/);
   });
 
+  it('refuses to issue read URLs (fail closed)', async () => {
+    await expect(svc.issueReadUrl('uploads/u/a.m4a', 60_000)).rejects.toThrow(
+      /cannot issue read URLs/,
+    );
+  });
+
   it('reports head for existing and missing files', async () => {
     const file = path.join(dir, 'a.bin');
     await fs.promises.writeFile(file, Buffer.alloc(42));
