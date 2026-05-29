@@ -28,6 +28,13 @@ export interface StorageService {
   /** Issue a time-limited upload URL the browser can PUT directly to. */
   issueUploadUrl(opts: IssueUploadOptions): Promise<IssuedUpload>;
 
+  /**
+   * Issue a time-limited upload URL for an explicit, caller-chosen blob path
+   * (e.g. a voice clip whose key is derived from a database id). The caller is
+   * responsible for namespacing/validating the path before passing it in.
+   */
+  issueUploadUrlForPath(blobPath: string): Promise<IssuedUpload>;
+
   /** Verify a previously-issued upload actually landed. Returns the real size. */
   head(blobPath: string): Promise<BlobHead>;
 
