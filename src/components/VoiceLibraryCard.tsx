@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Mic, Square, Trash2, Sparkles, Loader2, AlertCircle } from 'lucide-react';
+import { Mic, Square, Trash2, Sparkles, Loader2, AlertCircle, BookOpen } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { uploadVoiceSample } from '@/lib/uploadVoiceSample';
+import {
+  VOICE_ENROLLMENT_SCRIPT,
+  VOICE_ENROLLMENT_SCRIPT_TITLE,
+} from '@/lib/voiceEnrollmentScript';
 import {
   MAX_RECORDING_MS,
   MIN_RECORDING_MS,
@@ -193,6 +197,22 @@ export default function VoiceLibraryCard({ campaignId }: { campaignId: string })
         Record a short clip of yourself speaking (8–60s) so sessions can label your
         lines automatically.
       </p>
+
+      <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+        <div className="flex items-center space-x-2 mb-1">
+          <BookOpen className="h-4 w-4 text-indigo-600" />
+          <h3 className="text-sm font-medium text-indigo-900">
+            {VOICE_ENROLLMENT_SCRIPT_TITLE}
+          </h3>
+        </div>
+        <p className="text-sm italic text-indigo-900/90 leading-relaxed">
+          {VOICE_ENROLLMENT_SCRIPT}
+        </p>
+        <p className="text-xs text-indigo-700/80 mt-2">
+          Reading this covers a wide range of sounds, giving a more accurate voice
+          match.
+        </p>
+      </div>
 
       <div className="mb-4">
         <input
