@@ -54,6 +54,19 @@ describe('cosineSimilarity', () => {
     expect(cosineSimilarity(vec(0), new Float32Array(EMBEDDING_DIM))).toBe(0);
   });
 
+  it('returns 0 (not NaN/Infinity) on magnitude overflow', () => {
+    const huge = new Float32Array(EMBEDDING_DIM);
+    huge[0] = 1e200; // exceeds float32 range → stored as Infinity
+    huge[1] = 1e200;
+    expect(cosineSimilarity(huge, huge)).toBe(0);
+  });
+
+  it('returns 0 when an input contains NaN', () => {
+    const bad = vec(0);
+    bad[5] = NaN;
+    expect(cosineSimilarity(bad, vec(0))).toBe(0);
+  });
+
   it('throws on length mismatch', () => {
     expect(() => cosineSimilarity(new Float32Array(3), new Float32Array(4))).toThrow();
   });
@@ -80,6 +93,17 @@ describe('getFingerprintConfig', () => {
     expect(cfg.personFallbackThreshold).toBe(0.5);
     expect(cfg.learnThreshold).toBe(0.8); // garbage falls back
     expect(cfg.maxExemplars).toBe(5);
+  });
+
+  it('clamps out-of-range thresholds into [-1, 1] to protect matching', () => {
+    const cfg = getFingerprintConfig({
+      MATCH_THRESHOLD: '1.5',
+      PERSON_FALLBACK_THRESHOLD: '-0.5',
+      LEARN_THRESHOLD: '9',
+    } as unknown as NodeJS.ProcessEnv);
+    expect(cfg.matchThreshold).toBe(1);
+    expect(cfg.personFallbackThreshold).toBe(-0.5); // valid cosine value, kept
+    expect(cfg.learnThreshold).toBe(1);
   });
 });
 

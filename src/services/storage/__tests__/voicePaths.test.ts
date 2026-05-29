@@ -31,4 +31,13 @@ describe('voice clip blob paths', () => {
     // a cluster snippet is not owned by a normal user
     expect(voiceSamplePathOwnedBy(buildClusterSnippetPath('s', 0), 'user_1')).toBe(false);
   });
+
+  it('rejects path-traversal and key-splitting segments', () => {
+    expect(() => buildVoiceSamplePath('user_1', '../../../etc/passwd')).toThrow();
+    expect(() => buildVoiceSamplePath('../evil', 'abc')).toThrow();
+    expect(() => buildVoiceSamplePath('user_1', '')).toThrow();
+    expect(() => buildClusterSnippetPath('../x', 0)).toThrow();
+    expect(() => buildClusterSnippetPath('s', -1)).toThrow();
+    expect(() => buildClusterSnippetPath('s', 1.5)).toThrow();
+  });
 });

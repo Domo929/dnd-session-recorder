@@ -38,15 +38,20 @@ function parseNumber(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Clamp a cosine threshold to the valid similarity range. */
+function clampThreshold(raw: string | undefined, fallback: number): number {
+  return Math.min(1, Math.max(-1, parseNumber(raw, fallback)));
+}
+
 /** Resolve tunable thresholds from the environment, falling back to defaults. */
 export function getFingerprintConfig(env: NodeJS.ProcessEnv = process.env): FingerprintConfig {
   return {
-    matchThreshold: parseNumber(env.MATCH_THRESHOLD, DEFAULTS.matchThreshold),
-    personFallbackThreshold: parseNumber(
+    matchThreshold: clampThreshold(env.MATCH_THRESHOLD, DEFAULTS.matchThreshold),
+    personFallbackThreshold: clampThreshold(
       env.PERSON_FALLBACK_THRESHOLD,
       DEFAULTS.personFallbackThreshold,
     ),
-    learnThreshold: parseNumber(env.LEARN_THRESHOLD, DEFAULTS.learnThreshold),
+    learnThreshold: clampThreshold(env.LEARN_THRESHOLD, DEFAULTS.learnThreshold),
     maxExemplars: Math.max(0, Math.trunc(parseNumber(env.MAX_EXEMPLARS_PER_VOICE, DEFAULTS.maxExemplars))),
   };
 }
@@ -88,7 +93,10 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
     nb += b[i] * b[i];
   }
   if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  if (!Number.isFinite(denom)) return 0; // magnitude overflow → treat as non-matching
+  const sim = dot / denom;
+  return Number.isFinite(sim) ? sim : 0; // NaN inputs → non-matching
 }
 
 /** A voice and the embeddings that make up its fingerprint (seed + exemplars). */
