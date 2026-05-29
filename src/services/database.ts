@@ -1208,7 +1208,10 @@ export class DatabaseService {
       where: { snippetExpiresAt: { not: null, lt: now }, snippetBlobPath: { not: null } },
       select: { id: true, snippetBlobPath: true },
     });
-    return rows.filter((r): r is { id: string; snippetBlobPath: string } => r.snippetBlobPath !== null);
+    return rows.filter(
+      (r): r is { id: string; snippetBlobPath: string } =>
+        r.snippetBlobPath !== null && r.snippetBlobPath.trim() !== '',
+    );
   }
 
   /** Drop a cluster's expired snippet (leaves the cluster row in place). */
