@@ -1,0 +1,64 @@
+name: Build diarization GPU image
+
+# Builds and publishes the speaker-labels diarization GPU container
+# (docker/diarization/) to GHCR. This image is launched on a GPU Azure Container
+# Instance by the in-app dispatcher (SL-7, design §4). It is heavy (CUDA + ML
+# deps) so it only builds when the container sources change, or on demand.
+#
+# The image is published PUBLIC (no secrets baked in) so the ACI dispatcher can
+# pull it without registry credentials. The gated pyannote model is downloaded
+# at container runtime using HUGGINGFACE_TOKEN passed by the dispatcher.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/diarization/**'
+      - '.github/workflows/diarization-image.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: domo929/dnd-recorder-diarization
+
+permissions:
+  contents: read
+
+jobs:
+  build-push:
+    name: Build & push diarization image to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (tagged with commit SHA + latest)
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/diarization
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "Pushed ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed ${REGISTRY}/${IMAGE_NAME}:latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "⚠️ First publish: make the GHCR package PUBLIC so ACI can pull it without credentials." >> "$GITHUB_STEP_SUMMARY"

@@ -19,6 +19,8 @@ export interface DispatchConfig {
   resourceGroup: string | null;
   /** GPU SKU requested for the container group (design: T4). */
   gpuSku: string;
+  /** HuggingFace token for the gated pyannote model (passed to the container). */
+  huggingFaceToken: string | null;
 }
 
 const DEFAULT_REGIONS = ['centralus', 'westus2', 'eastus2'];
@@ -46,6 +48,7 @@ export function getDispatchConfig(env: NodeJS.ProcessEnv = process.env): Dispatc
     subscriptionId: env.AZURE_SUBSCRIPTION_ID || null,
     resourceGroup: env.DIARIZATION_ACI_RESOURCE_GROUP || null,
     gpuSku: env.DIARIZATION_GPU_SKU || 'T4',
+    huggingFaceToken: env.HUGGINGFACE_TOKEN || null,
   };
 }
 

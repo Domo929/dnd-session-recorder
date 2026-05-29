@@ -15,6 +15,7 @@ const baseConfig: DispatchConfig = {
   subscriptionId: 'sub',
   resourceGroup: 'rg',
   gpuSku: 'T4',
+  huggingFaceToken: null,
 };
 
 const baseState: DispatchState = {
