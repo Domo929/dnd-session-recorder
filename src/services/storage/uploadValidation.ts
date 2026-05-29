@@ -14,7 +14,11 @@ export const allowedMimeTypes = [
 ];
 
 export function isAllowedMime(mimetype: string): boolean {
-  return allowedMimeTypes.includes(mimetype);
+  // MediaRecorder (and some browsers) tag the type with parameters, e.g.
+  // "audio/webm;codecs=opus" or "audio/mp4; codecs=mp4a.40.2". Match on the base
+  // type only, normalizing case/whitespace, so codec-qualified types are accepted.
+  const baseType = mimetype.split(';')[0].trim().toLowerCase();
+  return allowedMimeTypes.includes(baseType);
 }
 
 /** Upload size ceiling in bytes. Default 2 GB now that bytes bypass the app server. */
