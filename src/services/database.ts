@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { Campaign, GamingSession, Transcription, Summary, Upload } from '@prisma/client';
+import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage } from '@prisma/client';
 
 export interface CreateCampaignData {
   name: string;
@@ -26,6 +26,8 @@ export interface CreateUploadData {
   size: number;
   mimetype: string;
   duration?: number;
+  storage?: UploadStorage;
+  audioExpiresAt?: Date | null;
 }
 
 export interface SessionWithIncludes extends GamingSession {
@@ -439,6 +441,8 @@ export class DatabaseService {
         size: data.size,
         mimetype: data.mimetype,
         duration: data.duration,
+        storage: data.storage ?? 'blob',
+        audioExpiresAt: data.audioExpiresAt ?? undefined,
         status: 'uploaded',
       },
     });

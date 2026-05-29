@@ -218,19 +218,26 @@ model DmTodoList {
   @@map("dm_todo_lists")
 }
 
+enum UploadStorage {
+  local
+  blob
+}
+
 model Upload {
-  id           String   @id @default(cuid())
-  userId       String   @map("user_id")
-  filename     String
-  originalName String   @map("original_name")
-  path         String
-  size         Int
-  mimetype     String
-  duration     Int?
-  status       String   @default("uploaded") // uploaded, processing, chunked, transcribed, cleaned
-  chunkPaths   String?  @map("chunk_paths") @db.Text // JSON array of chunk file paths
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id             String        @id @default(cuid())
+  userId         String        @map("user_id")
+  filename       String
+  originalName   String        @map("original_name")
+  path           String
+  size           Int
+  mimetype       String
+  duration       Int?
+  status         String        @default("uploaded") // uploaded, processing, chunked, transcribed, cleaned
+  storage        UploadStorage @default(blob) // where `path` lives: local disk or Azure Blob
+  audioExpiresAt DateTime?     @map("audio_expires_at") // populated/purged by speaker-labels retention cron
+  chunkPaths     String?       @map("chunk_paths") @db.Text // JSON array of chunk file paths
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   gamingSessions GamingSession[]
