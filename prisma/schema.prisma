@@ -233,7 +233,7 @@ model Upload {
   mimetype       String
   duration       Int?
   status         String        @default("uploaded") // uploaded, processing, chunked, transcribed, cleaned
-  storage        UploadStorage @default(blob) // where `path` lives: local disk or Azure Blob
+  storage        UploadStorage @default(local) // where `path` lives: local disk or Azure Blob. DB default is 'local' so the additive migration backfills pre-existing rows correctly; new uploads are inserted with storage='blob' explicitly by the app layer.
   audioExpiresAt DateTime?     @map("audio_expires_at") // populated/purged by speaker-labels retention cron
   chunkPaths     String?       @map("chunk_paths") @db.Text // JSON array of chunk file paths
   createdAt      DateTime      @default(now()) @map("created_at")

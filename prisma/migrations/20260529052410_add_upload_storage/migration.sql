@@ -3,10 +3,10 @@ CREATE TYPE "UploadStorage" AS ENUM ('local', 'blob');
 
 -- AlterTable
 ALTER TABLE "uploads" ADD COLUMN     "audio_expires_at" TIMESTAMP(3),
-ADD COLUMN     "storage" "UploadStorage" NOT NULL DEFAULT 'blob';
+ADD COLUMN     "storage" "UploadStorage" NOT NULL DEFAULT 'local';
 
--- Backfill: the column default ('blob') was applied to all pre-existing rows by
--- the ADD COLUMN above. Those rows predate blob storage and still live on local
--- disk, so flip them back to 'local'. New inserts after this migration default to
--- 'blob' via the Prisma schema default.
-UPDATE "uploads" SET "storage" = 'local' WHERE "created_at" < NOW();
+-- Every row that exists when this migration runs predates blob storage and lives
+-- on local disk, so the column default of 'local' backfills them correctly with no
+-- separate UPDATE. New uploads are inserted with storage='blob' explicitly by the
+-- application layer (db.createUpload / createUploadFromBlob), so the 'local' default
+-- only ever applies to these pre-existing rows.

@@ -66,6 +66,18 @@ export async function migrateUploadsToBlob(deps: MigrationDeps): Promise<Migrati
       continue;
     }
 
+    // Guard against migrating a corrupted/truncated local file: the on-disk size
+    // must match the size recorded at upload time. A mismatch means the file
+    // changed under us, so leave it on local disk (don't upload, don't delete)
+    // for a human to investigate.
+    if (localSize !== row.size) {
+      deps.log(
+        `SKIP ${row.id}: on-disk size ${localSize} != recorded size ${row.size} (${row.path}); leaving on local disk`,
+      );
+      result.skipped += 1;
+      continue;
+    }
+
     // filename already carries the `{timestamp}-{uuid}` convention — no rename.
     const blobPath = buildBlobPath(row.userId, row.filename);
 

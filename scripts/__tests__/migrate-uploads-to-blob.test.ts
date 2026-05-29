@@ -85,6 +85,19 @@ describe('migrateUploadsToBlob', () => {
     expect(deps.unlink).not.toHaveBeenCalled();
   });
 
+  it('skips rows whose on-disk size no longer matches the recorded size', async () => {
+    const row = makeRow({ size: 1000 });
+    // fileSize reports a different size than row.size (corruption/truncation).
+    const deps = makeDeps([row], { fileSize: vi.fn(() => 500) });
+
+    const result = await migrateUploadsToBlob(deps);
+
+    expect(result).toEqual({ migrated: 0, skipped: 1, failed: 0 });
+    expect(deps.storage.uploadFile).not.toHaveBeenCalled();
+    expect(deps.markMigrated).not.toHaveBeenCalled();
+    expect(deps.unlink).not.toHaveBeenCalled();
+  });
+
   it('is idempotent: a re-run with no local rows does nothing', async () => {
     const deps = makeDeps([]);
 
