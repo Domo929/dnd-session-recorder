@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
+import { maybeEnqueueDiarization } from '@/services/diarization';
 import { logger } from '@/lib/logger';
 
 /**
@@ -118,6 +119,15 @@ export async function POST(
         step: 'transcription',
         session: await db.getSessionById(sessionId)
       });
+    }
+
+    // Speaker labels: enqueue diarization once transcription exists. Best-effort
+    // so a failure here never blocks summary generation. The job stays queued
+    // until the (deferred) dispatcher picks it up.
+    try {
+      await maybeEnqueueDiarization(session);
+    } catch (err) {
+      logger.error('Failed to enqueue diarization', err as Error, { sessionId });
     }
 
     // Step 2: Check summary status

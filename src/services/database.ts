@@ -1,5 +1,7 @@
+import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma';
-import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode } from '@prisma/client';
+import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster } from '@prisma/client';
+import { deserializeEmbedding, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
 
 export interface CreateCampaignData {
   name: string;
@@ -654,6 +656,215 @@ export class DatabaseService {
 
   async deleteVoiceSample(id: string): Promise<void> {
     await prisma.voiceSample.delete({ where: { id } });
+  }
+
+  // Diarization + self-refining-fingerprint operations
+
+  /** Queue a diarization run for a session and mark it queued. Returns the job. */
+  async createDiarizationJob(sessionId: string): Promise<DiarizationJob> {
+    const hmacSecret = randomBytes(32).toString('hex');
+    const [job] = await prisma.$transaction([
+      prisma.diarizationJob.create({ data: { sessionId, status: 'queued', hmacSecret } }),
+      prisma.gamingSession.update({
+        where: { id: sessionId },
+        data: { diarizationStatus: 'queued' },
+      }),
+    ]);
+    return job;
+  }
+
+  async getDiarizationJobById(
+    jobId: string,
+  ): Promise<(DiarizationJob & { session: GamingSession }) | null> {
+    return prisma.diarizationJob.findUnique({
+      where: { id: jobId },
+      include: { session: true },
+    });
+  }
+
+  async updateDiarizationJob(
+    jobId: string,
+    data: {
+      status?: DiarizationStatus;
+      aciResourceId?: string | null;
+      region?: string | null;
+      startedAt?: Date | null;
+      finishedAt?: Date | null;
+      errorMessage?: string | null;
+      costEstimateUsd?: number | null;
+      incrementAttempt?: boolean;
+    },
+  ): Promise<DiarizationJob> {
+    const { incrementAttempt, ...rest } = data;
+    return prisma.diarizationJob.update({
+      where: { id: jobId },
+      data: {
+        ...rest,
+        ...(incrementAttempt && { attemptCount: { increment: 1 } }),
+      },
+    });
+  }
+
+  /**
+   * All voices in a campaign as match-ready fingerprints: each voice's seed
+   * embedding followed by its learned exemplars (per the self-refining design).
+   */
+  async getCampaignFingerprints(campaignId: string): Promise<VoiceFingerprint[]> {
+    const samples = await prisma.voiceSample.findMany({
+      where: { member: { campaignId } },
+      select: {
+        id: true,
+        label: true,
+        memberId: true,
+        embedding: true,
+        exemplars: { select: { embedding: true } },
+      },
+    });
+    return samples.map((s) => ({
+      voiceSampleId: s.id,
+      memberId: s.memberId,
+      label: s.label,
+      embeddings: [
+        deserializeEmbedding(Buffer.from(s.embedding)),
+        ...s.exemplars.map((e) => deserializeEmbedding(Buffer.from(e.embedding))),
+      ],
+    }));
+  }
+
+  async upsertSpeakerCluster(data: {
+    sessionId: string;
+    campaignId: string;
+    clusterIdx: number;
+    embeddingCentroid: Buffer;
+    segmentCount: number;
+    totalDurationMs: number;
+    displayLabel: string;
+    voiceSampleId: string | null;
+    matchConfidence: string;
+    matchedScore: number | null;
+    snippetBlobPath?: string | null;
+    snippetExpiresAt?: Date | null;
+  }): Promise<SessionSpeakerCluster> {
+    const embedding = new Uint8Array(data.embeddingCentroid);
+    return prisma.sessionSpeakerCluster.upsert({
+      where: { sessionId_clusterIdx: { sessionId: data.sessionId, clusterIdx: data.clusterIdx } },
+      create: {
+        sessionId: data.sessionId,
+        campaignId: data.campaignId,
+        clusterIdx: data.clusterIdx,
+        embeddingCentroid: embedding,
+        segmentCount: data.segmentCount,
+        totalDurationMs: data.totalDurationMs,
+        displayLabel: data.displayLabel,
+        voiceSampleId: data.voiceSampleId,
+        matchConfidence: data.matchConfidence,
+        matchedScore: data.matchedScore,
+        snippetBlobPath: data.snippetBlobPath ?? null,
+        snippetExpiresAt: data.snippetExpiresAt ?? null,
+      },
+      update: {
+        embeddingCentroid: embedding,
+        segmentCount: data.segmentCount,
+        totalDurationMs: data.totalDurationMs,
+        displayLabel: data.displayLabel,
+        voiceSampleId: data.voiceSampleId,
+        matchConfidence: data.matchConfidence,
+        matchedScore: data.matchedScore,
+        snippetBlobPath: data.snippetBlobPath ?? null,
+        snippetExpiresAt: data.snippetExpiresAt ?? null,
+      },
+    });
+  }
+
+  /** Replace a session's transcriptions with speaker-attributed segments. */
+  async replaceSpeakerLabeledTranscriptions(
+    sessionId: string,
+    rows: { startTime: number; endTime: number; text: string; confidence: number | null; speakerClusterId: string }[],
+  ): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      await tx.transcription.deleteMany({ where: { sessionId } });
+      await tx.transcription.createMany({
+        data: rows.map((r) => ({
+          sessionId,
+          startTime: r.startTime,
+          endTime: r.endTime,
+          text: r.text,
+          confidence: r.confidence,
+          speakerClusterId: r.speakerClusterId,
+        })),
+      });
+    });
+  }
+
+  /**
+   * Fold a high-confidence cluster centroid into a voice's fingerprint as a
+   * learned exemplar. Idempotent per source session (upsert), and evicts the
+   * oldest exemplars past the cap. Keeps `exemplarCount` in sync.
+   */
+  async addLearnedExemplar(args: {
+    voiceSampleId: string;
+    embedding: Buffer;
+    embeddingModel: string;
+    source: VoiceExemplarSource;
+    sourceSessionId: string;
+    similarityAtCapture: number | null;
+    durationMs: number;
+    maxExemplars: number;
+  }): Promise<void> {
+    const embedding = new Uint8Array(args.embedding);
+    await prisma.$transaction(async (tx) => {
+      await tx.voiceExemplar.upsert({
+        where: {
+          voiceSampleId_sourceSessionId: {
+            voiceSampleId: args.voiceSampleId,
+            sourceSessionId: args.sourceSessionId,
+          },
+        },
+        create: {
+          voiceSampleId: args.voiceSampleId,
+          embedding,
+          embeddingModel: args.embeddingModel,
+          source: args.source,
+          sourceSessionId: args.sourceSessionId,
+          similarityAtCapture: args.similarityAtCapture,
+          durationMs: args.durationMs,
+        },
+        update: {
+          embedding,
+          embeddingModel: args.embeddingModel,
+          source: args.source,
+          similarityAtCapture: args.similarityAtCapture,
+          durationMs: args.durationMs,
+        },
+      });
+
+      const all = await tx.voiceExemplar.findMany({
+        where: { voiceSampleId: args.voiceSampleId },
+        select: { id: true, createdAt: true },
+      });
+      const toEvict = selectExemplarsToEvict(all, args.maxExemplars);
+      if (toEvict.length > 0) {
+        await tx.voiceExemplar.deleteMany({ where: { id: { in: toEvict } } });
+      }
+      await tx.voiceSample.update({
+        where: { id: args.voiceSampleId },
+        data: { exemplarCount: all.length - toEvict.length },
+      });
+    });
+  }
+
+  async setSessionDiarizationStatus(
+    sessionId: string,
+    status: DiarizationStatus,
+    opts: { needsResummarize?: boolean } = {},
+  ): Promise<void> {
+    await prisma.gamingSession.update({
+      where: { id: sessionId },
+      data: {
+        diarizationStatus: status,
+        ...(opts.needsResummarize !== undefined && { needsResummarize: opts.needsResummarize }),
+      },
+    });
   }
 
   // User operations (for test cleanup)
