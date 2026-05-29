@@ -4,6 +4,8 @@ import { requireAuth } from '@/lib/auth-utils';
 import { getCampaignAccess, requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { generateAiText, isAiMocked } from '@/lib/ai';
+import { buildSpeakerContext, buildSpeakerSummaryPrompt, type SpeakerContext } from '@/services/speakerContext';
+import { buildNpcInferencePrompt, parseNpcSuggestions } from '@/lib/npcInference';
 import { isTestAccount } from '@/lib/whitelist';
 import { logger } from '@/lib/logger';
 
@@ -32,12 +34,69 @@ function formatTranscriptionsForSummary(transcriptions: Array<{ text: string }>)
     .join(' ');
 }
 
+/**
+ * NPC inference pass (design Section 5): infer names for unidentified clusters
+ * and store them as pending suggestions. Runs at most once per session and only
+ * when the campaign opted in and there is at least one unidentified cluster.
+ * Best-effort: any failure is logged and swallowed so the summary still
+ * succeeds.
+ */
+async function runNpcInference(
+  sessionId: string,
+  enabled: boolean,
+  ctx: SpeakerContext,
+): Promise<void> {
+  if (!enabled || ctx.unknownLabels.length === 0) return;
+
+  // Atomically claim the run (none|failed → pending). A lost race (already
+  // pending/completed) returns false, so inference never double-runs.
+  const claimed = await db.claimNpcInference(sessionId);
+  if (!claimed) return;
+
+  try {
+    const prompt = buildNpcInferencePrompt({ unknownLabels: ctx.unknownLabels, turns: ctx.turns });
+    const { text } = await generateAiText(prompt, 'npc-inference');
+    const suggestions = parseNpcSuggestions(text, ctx.unknownLabels);
+
+    // Map the model's label back to the cluster id.
+    const clusterIdByLabel = new Map(ctx.clusters.map((c) => [c.displayLabel, c.id]));
+    const rows = suggestions
+      .map((s) => {
+        const clusterId = clusterIdByLabel.get(s.label);
+        if (!clusterId) return null;
+        return {
+          clusterId,
+          suggestedName: s.suggestedName,
+          confidence: s.confidence,
+          reasoning: s.reasoning,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (rows.length > 0) await db.createNpcSuggestions(sessionId, rows);
+    await db.setNpcInferenceStatus(sessionId, 'completed');
+    logger.info('NPC inference completed', { sessionId, suggestions: rows.length });
+  } catch (err) {
+    logger.error('NPC inference failed', err as Error, { sessionId });
+    await db.setNpcInferenceStatus(sessionId, 'failed').catch(() => {});
+  }
+}
+
 // POST /api/summary/[sessionId] - Generate summary
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
+
+  // Optional { regenerate: true } forces a fresh summary (cost-aware re-summarize).
+  let regenerate = false;
+  try {
+    const body = await request.json();
+    regenerate = body?.regenerate === true;
+  } catch {
+    // No/non-JSON body — treat as a normal (idempotent) generation.
+  }
 
   try {
     // Check authentication and get user info
@@ -79,9 +138,9 @@ export async function POST(
       );
     }
 
-    // IDEMPOTENCY: Check if summary already exists
+    // IDEMPOTENCY: skip if a summary already exists, UNLESS regenerating.
     const existingSummary = await db.getSummary(sessionId);
-    if (existingSummary) {
+    if (existingSummary && !regenerate) {
       logger.info('Summary already exists, skipping', { sessionId });
 
       // Update status to completed if not already
@@ -115,14 +174,26 @@ export async function POST(
       );
     }
 
-    logger.info('Starting summary generation', { sessionId });
+    logger.info('Starting summary generation', { sessionId, regenerate });
     await updateSessionStatus(sessionId, 'summarizing');
 
-    // Format transcriptions for summarization
-    const formattedText = formatTranscriptionsForSummary(transcriptions);
+    // Speaker-aware summary when diarization produced labeled clusters;
+    // otherwise the original plain-transcript prompt.
+    const speakerLabeled =
+      session.transcriptionMode === 'speaker_labeled' && session.diarizationStatus === 'completed';
+    let speakerContext: SpeakerContext | null = null;
+    let prompt: string;
 
-    // Build the prompt with optional campaign context
-    let basePrompt = `You are a skilled storyteller and D&D campaign chronicler. Below is a transcript of a D&D session. Please create an engaging summary that:
+    if (speakerLabeled) {
+      speakerContext = await buildSpeakerContext(sessionId);
+      prompt = buildSpeakerSummaryPrompt({
+        roster: speakerContext.roster,
+        turns: speakerContext.turns,
+        campaignSystemPrompt: campaign.systemPrompt,
+      });
+    } else {
+      const formattedText = formatTranscriptionsForSummary(transcriptions);
+      let basePrompt = `You are a skilled storyteller and D&D campaign chronicler. Below is a transcript of a D&D session. Please create an engaging summary that:
 
 1. Tells the story of what happened in this session
 2. Identifies key events, decisions, and character moments
@@ -131,19 +202,31 @@ export async function POST(
 5. Uses the character names provided
 6. Focuses on story elements, combat highlights, and character development`;
 
-    // Add campaign-specific context if available
-    if (campaign.systemPrompt) {
-      basePrompt += `\n\nCampaign Context:\n${campaign.systemPrompt}`;
+      if (campaign.systemPrompt) {
+        basePrompt += `\n\nCampaign Context:\n${campaign.systemPrompt}`;
+      }
+
+      basePrompt += `\n\nHere's the transcript:\n\n${formattedText}\n\nPlease provide a compelling summary that captures the essence of this D&D session.`;
+      prompt = basePrompt;
     }
 
-    basePrompt += `\n\nHere's the transcript:\n\n${formattedText}\n\nPlease provide a compelling summary that captures the essence of this D&D session.`;
-
     // Generate summary via the AI service wrapper
-    const { text: summaryText } = await generateAiText(basePrompt, 'summary');
+    const { text: summaryText } = await generateAiText(prompt, 'summary');
 
-    // Save summary to database
-    await db.saveSummary(sessionId, summaryText);
+    // Save (or overwrite, when regenerating) the summary.
+    if (existingSummary) {
+      await db.updateSummary(sessionId, summaryText);
+    } else {
+      await db.saveSummary(sessionId, summaryText);
+    }
+    await db.clearNeedsResummarize(sessionId);
     await updateSessionStatus(sessionId, 'completed');
+
+    // NPC inference pass: once, when there are unidentified clusters and the
+    // campaign opted in. Best-effort — never fails the summary.
+    if (speakerLabeled && speakerContext) {
+      await runNpcInference(sessionId, campaign.npcInferenceEnabled, speakerContext);
+    }
 
     logger.info('Summary generation completed', { sessionId });
 

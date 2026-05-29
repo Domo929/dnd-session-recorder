@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma';
-import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster } from '@prisma/client';
-import { deserializeEmbedding, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
+import { Prisma, Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster, SessionNpcSuggestion } from '@prisma/client';
+import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
 
 export interface CreateCampaignData {
   name: string;
@@ -66,6 +66,39 @@ export interface VoiceSampleListItem {
   source: VoiceSampleSource;
   exemplarCount: number;
   createdAt: Date;
+}
+
+/** A speaker cluster enriched for the speaker-aware transcript view (SL-5). */
+export interface SessionClusterView {
+  id: string;
+  clusterIdx: number;
+  displayLabel: string;
+  voiceSampleId: string | null;
+  matchConfidence: string;
+  matchedScore: number | null;
+  snippetBlobPath: string | null;
+  snippetAvailable: boolean;
+  voiceLabel: string | null;
+  playedByEmail: string | null;
+  npcSuggestion: {
+    id: string;
+    suggestedName: string;
+    confidence: string;
+    reasoning: string;
+    status: string;
+  } | null;
+}
+
+/**
+ * Thrown when a cluster tag is attempted but the cluster has already been
+ * claimed (its `voiceSampleId` is no longer null). Lets concurrent tag /
+ * NPC-accept requests fail closed instead of creating a duplicate voice.
+ */
+export class ClusterAlreadyTaggedError extends Error {
+  constructor(clusterId: string) {
+    super(`Cluster ${clusterId} is already tagged`);
+    this.name = 'ClusterAlreadyTaggedError';
+  }
 }
 
 export class DatabaseService {
@@ -828,45 +861,60 @@ export class DatabaseService {
     durationMs: number;
     maxExemplars: number;
   }): Promise<void> {
-    const embedding = new Uint8Array(args.embedding);
-    await prisma.$transaction(async (tx) => {
-      await tx.voiceExemplar.upsert({
-        where: {
-          voiceSampleId_sourceSessionId: {
-            voiceSampleId: args.voiceSampleId,
-            sourceSessionId: args.sourceSessionId,
-          },
-        },
-        create: {
-          voiceSampleId: args.voiceSampleId,
-          embedding,
-          embeddingModel: args.embeddingModel,
-          source: args.source,
-          sourceSessionId: args.sourceSessionId,
-          similarityAtCapture: args.similarityAtCapture,
-          durationMs: args.durationMs,
-        },
-        update: {
-          embedding,
-          embeddingModel: args.embeddingModel,
-          source: args.source,
-          similarityAtCapture: args.similarityAtCapture,
-          durationMs: args.durationMs,
-        },
-      });
+    await prisma.$transaction((tx) => this.addLearnedExemplarTx(tx, args));
+  }
 
-      const all = await tx.voiceExemplar.findMany({
-        where: { voiceSampleId: args.voiceSampleId },
-        select: { id: true, createdAt: true },
-      });
-      const toEvict = selectExemplarsToEvict(all, args.maxExemplars);
-      if (toEvict.length > 0) {
-        await tx.voiceExemplar.deleteMany({ where: { id: { in: toEvict } } });
-      }
-      await tx.voiceSample.update({
-        where: { id: args.voiceSampleId },
-        data: { exemplarCount: all.length - toEvict.length },
-      });
+  /** Exemplar-learning body, run against a caller-supplied transaction client. */
+  private async addLearnedExemplarTx(
+    tx: Prisma.TransactionClient,
+    args: {
+      voiceSampleId: string;
+      embedding: Buffer;
+      embeddingModel: string;
+      source: VoiceExemplarSource;
+      sourceSessionId: string;
+      similarityAtCapture: number | null;
+      durationMs: number;
+      maxExemplars: number;
+    },
+  ): Promise<void> {
+    const embedding = new Uint8Array(args.embedding);
+    await tx.voiceExemplar.upsert({
+      where: {
+        voiceSampleId_sourceSessionId: {
+          voiceSampleId: args.voiceSampleId,
+          sourceSessionId: args.sourceSessionId,
+        },
+      },
+      create: {
+        voiceSampleId: args.voiceSampleId,
+        embedding,
+        embeddingModel: args.embeddingModel,
+        source: args.source,
+        sourceSessionId: args.sourceSessionId,
+        similarityAtCapture: args.similarityAtCapture,
+        durationMs: args.durationMs,
+      },
+      update: {
+        embedding,
+        embeddingModel: args.embeddingModel,
+        source: args.source,
+        similarityAtCapture: args.similarityAtCapture,
+        durationMs: args.durationMs,
+      },
+    });
+
+    const all = await tx.voiceExemplar.findMany({
+      where: { voiceSampleId: args.voiceSampleId },
+      select: { id: true, createdAt: true },
+    });
+    const toEvict = selectExemplarsToEvict(all, args.maxExemplars);
+    if (toEvict.length > 0) {
+      await tx.voiceExemplar.deleteMany({ where: { id: { in: toEvict } } });
+    }
+    await tx.voiceSample.update({
+      where: { id: args.voiceSampleId },
+      data: { exemplarCount: all.length - toEvict.length },
     });
   }
 
@@ -882,6 +930,268 @@ export class DatabaseService {
         ...(opts.needsResummarize !== undefined && { needsResummarize: opts.needsResummarize }),
       },
     });
+  }
+
+  // ---- Speaker-labels: transcript view, tag cascade, NPC suggestions (SL-5) ----
+
+  /** Clusters for a session, enriched for the speaker-aware transcript view. */
+  async getSessionClusters(sessionId: string): Promise<SessionClusterView[]> {
+    const clusters = await prisma.sessionSpeakerCluster.findMany({
+      where: { sessionId },
+      orderBy: { clusterIdx: 'asc' },
+      include: {
+        voiceSample: { include: { member: { include: { user: { select: { email: true } } } } } },
+        npcSuggestion: true,
+      },
+    });
+    const now = Date.now();
+    return clusters.map((c) => ({
+      id: c.id,
+      clusterIdx: c.clusterIdx,
+      displayLabel: c.displayLabel,
+      voiceSampleId: c.voiceSampleId,
+      matchConfidence: c.matchConfidence,
+      matchedScore: c.matchedScore,
+      snippetBlobPath: c.snippetBlobPath,
+      snippetAvailable:
+        !!c.snippetBlobPath && (!c.snippetExpiresAt || c.snippetExpiresAt.getTime() > now),
+      voiceLabel: c.voiceSample?.label ?? null,
+      playedByEmail: c.voiceSample?.member.user.email ?? null,
+      npcSuggestion: c.npcSuggestion
+        ? {
+            id: c.npcSuggestion.id,
+            suggestedName: c.npcSuggestion.suggestedName,
+            confidence: c.npcSuggestion.confidence,
+            reasoning: c.npcSuggestion.reasoning,
+            status: c.npcSuggestion.status,
+          }
+        : null,
+    }));
+  }
+
+  /** Campaign voices for the "maybe one of these?" tag dropdown. */
+  async getCampaignVoiceOptions(campaignId: string): Promise<{ id: string; label: string }[]> {
+    const samples = await prisma.voiceSample.findMany({
+      where: { member: { campaignId } },
+      select: { id: true, label: true },
+      orderBy: { label: 'asc' },
+    });
+    return samples;
+  }
+
+  /** A cluster plus the data needed to authorize + run the tag cascade. */
+  async getClusterForTagging(clusterId: string): Promise<
+    | (SessionSpeakerCluster & { session: { campaignId: string } })
+    | null
+  > {
+    return prisma.sessionSpeakerCluster.findUnique({
+      where: { id: clusterId },
+      include: { session: { select: { campaignId: true } } },
+    });
+  }
+
+  /**
+   * Link an unknown cluster to an EXISTING campaign voice (manual tag). Sets the
+   * label, folds the cluster centroid in as a DM-confirmed exemplar (learning),
+   * and flags the session for re-summarization.
+   */
+  async tagClusterWithExistingVoice(
+    clusterId: string,
+    voiceSampleId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const voice = await prisma.voiceSample.findUnique({
+      where: { id: voiceSampleId },
+      select: { label: true },
+    });
+    if (!voice) throw new Error('Voice sample not found');
+    const cluster = await prisma.sessionSpeakerCluster.findUnique({
+      where: { id: clusterId },
+      select: { embeddingCentroid: true, matchedScore: true, totalDurationMs: true },
+    });
+    if (!cluster) throw new Error('Cluster not found');
+
+    await prisma.$transaction(async (tx) => {
+      // Claim the cluster only if still untagged — fail closed on a concurrent tag.
+      const claimed = await tx.sessionSpeakerCluster.updateMany({
+        where: { id: clusterId, voiceSampleId: null },
+        data: { voiceSampleId, displayLabel: voice.label, matchConfidence: 'high' },
+      });
+      if (claimed.count === 0) throw new ClusterAlreadyTaggedError(clusterId);
+
+      await this.addLearnedExemplarTx(tx, {
+        voiceSampleId,
+        embedding: Buffer.from(cluster.embeddingCentroid),
+        embeddingModel: 'ecapa-tdnn-v1',
+        source: 'dm_confirmed',
+        sourceSessionId: sessionId,
+        similarityAtCapture: cluster.matchedScore,
+        durationMs: cluster.totalDurationMs,
+        maxExemplars: getFingerprintConfig().maxExemplars,
+      });
+      await tx.gamingSession.update({
+        where: { id: sessionId },
+        data: { needsResummarize: true },
+      });
+    });
+  }
+
+  /**
+   * Tag an unknown cluster with a NEW name (lazy-tagging cascade, design §3):
+   * promote the cluster's snippet to a new VoiceSample, link the cluster, then
+   * scan all still-unknown clusters campaign-wide and auto-link any that match
+   * the new voice. Every affected session is flagged for re-summarization.
+   * Returns the new sample id and the affected session ids.
+   */
+  async tagClusterWithNewName(args: {
+    clusterId: string;
+    name: string;
+    memberId: string;
+    campaignId: string;
+  }): Promise<{ voiceSampleId: string; affectedSessionIds: string[] }> {
+    const cluster = await prisma.sessionSpeakerCluster.findUnique({
+      where: { id: args.clusterId },
+    });
+    if (!cluster) throw new Error('Cluster not found');
+
+    const newEmbedding = deserializeEmbedding(Buffer.from(cluster.embeddingCentroid));
+    const threshold = getFingerprintConfig().matchThreshold;
+
+    return prisma.$transaction(async (tx) => {
+      const sample = await tx.voiceSample.create({
+        data: {
+          memberId: args.memberId,
+          label: args.name,
+          audioPath: cluster.snippetBlobPath ?? '',
+          embedding: new Uint8Array(cluster.embeddingCentroid),
+          embeddingModel: 'ecapa-tdnn-v1',
+          durationMs: cluster.totalDurationMs,
+          source: 'tagged_from_cluster',
+          originalClusterId: cluster.id,
+        },
+      });
+
+      // Link + promote this cluster (its snippet is now the voice's audio).
+      // Conditional on still-untagged so a concurrent tag/NPC-accept can't create
+      // a second voice for the same cluster — the loser rolls this whole txn back.
+      const claimed = await tx.sessionSpeakerCluster.updateMany({
+        where: { id: cluster.id, voiceSampleId: null },
+        data: {
+          voiceSampleId: sample.id,
+          displayLabel: args.name,
+          matchConfidence: 'high',
+          snippetExpiresAt: null,
+        },
+      });
+      if (claimed.count === 0) throw new ClusterAlreadyTaggedError(cluster.id);
+
+      // Cascade: auto-link other still-unknown clusters in the campaign.
+      const candidates = await tx.sessionSpeakerCluster.findMany({
+        where: { campaignId: args.campaignId, voiceSampleId: null, id: { not: cluster.id } },
+        select: { id: true, sessionId: true, embeddingCentroid: true },
+      });
+      const affected = new Set<string>([cluster.sessionId]);
+      for (const cand of candidates) {
+        const score = cosineSimilarity(
+          newEmbedding,
+          deserializeEmbedding(Buffer.from(cand.embeddingCentroid)),
+        );
+        if (score >= threshold) {
+          await tx.sessionSpeakerCluster.update({
+            where: { id: cand.id },
+            data: {
+              voiceSampleId: sample.id,
+              displayLabel: args.name,
+              matchConfidence: 'high',
+              matchedScore: score,
+            },
+          });
+          affected.add(cand.sessionId);
+        }
+      }
+
+      await tx.gamingSession.updateMany({
+        where: { id: { in: [...affected] } },
+        data: { needsResummarize: true },
+      });
+
+      return { voiceSampleId: sample.id, affectedSessionIds: [...affected] };
+    });
+  }
+
+  /** Insert NPC suggestions, skipping clusters that already have one. */
+  async createNpcSuggestions(
+    sessionId: string,
+    items: { clusterId: string; suggestedName: string; confidence: string; reasoning: string }[],
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+    const result = await prisma.sessionNpcSuggestion.createMany({
+      data: items.map((i) => ({
+        sessionId,
+        clusterId: i.clusterId,
+        suggestedName: i.suggestedName,
+        confidence: i.confidence,
+        reasoning: i.reasoning,
+      })),
+      skipDuplicates: true,
+    });
+    return result.count;
+  }
+
+  async getNpcSuggestionById(
+    id: string,
+  ): Promise<(SessionNpcSuggestion & { session: { campaignId: string } }) | null> {
+    return prisma.sessionNpcSuggestion.findUnique({
+      where: { id },
+      include: { session: { select: { campaignId: true } } },
+    });
+  }
+
+  /**
+   * Atomically resolve a suggestion only if still pending. Returns false when it
+   * was already resolved (lost a concurrent race), so callers can fail closed.
+   */
+  async resolveNpcSuggestion(
+    id: string,
+    status: 'accepted' | 'rejected',
+    userId: string,
+  ): Promise<boolean> {
+    const result = await prisma.sessionNpcSuggestion.updateMany({
+      where: { id, status: 'pending' },
+      data: { status, resolvedAt: new Date(), resolvedBy: userId },
+    });
+    return result.count > 0;
+  }
+
+  /** Clear the re-summarize banner flag (after a successful re-summary). */
+  async clearNeedsResummarize(sessionId: string): Promise<void> {
+    await prisma.gamingSession.update({
+      where: { id: sessionId },
+      data: { needsResummarize: false },
+    });
+  }
+
+  async setNpcInferenceStatus(
+    sessionId: string,
+    status: 'none' | 'pending' | 'completed' | 'failed',
+  ): Promise<void> {
+    await prisma.gamingSession.update({
+      where: { id: sessionId },
+      data: { npcInferenceStatus: status },
+    });
+  }
+
+  /**
+   * Atomically transition NPC inference into 'pending', but only from a state
+   * where a fresh run is allowed ('none' or 'failed'). Returns false when the
+   * session is already 'pending' or 'completed', so inference runs at most once.
+   */
+  async claimNpcInference(sessionId: string): Promise<boolean> {
+    const result = await prisma.gamingSession.updateMany({
+      where: { id: sessionId, npcInferenceStatus: { in: ['none', 'failed'] } },
+      data: { npcInferenceStatus: 'pending' },
+    });
+    return result.count > 0;
   }
 
   // User operations (for test cleanup)
