@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Calendar, Clock, BookOpen, ArrowLeft, AlertCircle, Play, Edit3, Save, X, FileText, Sparkles, Trash2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import MembersCard from '@/components/MembersCard';
+import InviteLinkCard from '@/components/InviteLinkCard';
 import { logger } from '@/lib/logger';
 
 interface Campaign {
@@ -15,6 +17,7 @@ interface Campaign {
   systemPrompt: string | null;
   createdAt: string;
   updatedAt: string;
+  viewerRole?: 'owner' | 'player';
 }
 
 interface Session {
@@ -197,6 +200,8 @@ export default function CampaignDetailsPage() {
     );
   }
 
+  const isOwner = campaign.viewerRole === 'owner';
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -227,12 +232,14 @@ export default function CampaignDetailsPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900">Session Timeline</h2>
-              <Link href={`/sessions/upload?campaignId=${campaignId}`}>
-                <Button size="sm" className="flex items-center space-x-2">
-                  <Play className="h-4 w-4" />
-                  <span>New Session</span>
-                </Button>
-              </Link>
+              {isOwner && (
+                <Link href={`/sessions/upload?campaignId=${campaignId}`}>
+                  <Button size="sm" className="flex items-center space-x-2">
+                    <Play className="h-4 w-4" />
+                    <span>New Session</span>
+                  </Button>
+                </Link>
+              )}
             </div>
 
             {sessionsLoading ? (
@@ -244,9 +251,11 @@ export default function CampaignDetailsPage() {
               <div className="text-center py-8">
                 <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-3" />
                 <p className="text-gray-500 mb-4">No sessions yet for this campaign</p>
-                <Link href={`/sessions/upload?campaignId=${campaignId}`}>
-                  <Button>Create First Session</Button>
-                </Link>
+                {isOwner && (
+                  <Link href={`/sessions/upload?campaignId=${campaignId}`}>
+                    <Button>Create First Session</Button>
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -285,14 +294,16 @@ export default function CampaignDetailsPage() {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <button
-                            onClick={(e) => handleDeleteSession(session.id, session.title, e)}
-                            disabled={deleteSessionMutation.isPending}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50"
-                            title="Delete session"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {isOwner && (
+                            <button
+                              onClick={(e) => handleDeleteSession(session.id, session.title, e)}
+                              disabled={deleteSessionMutation.isPending}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg hover:bg-red-50 text-red-600 hover:text-red-700 disabled:opacity-50"
+                              title="Delete session"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                           <div className="text-gray-400">
                             <ArrowLeft className="h-5 w-5 rotate-180" />
                           </div>
@@ -307,11 +318,11 @@ export default function CampaignDetailsPage() {
         </div>
 
         {/* System Prompt Card */}
-        <div className="lg:col-span-1">
-          <div className="bg-white rounded-xl border border-gray-200 p-6 sticky top-6">
+        <div className="lg:col-span-1 space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-900">Campaign Context</h2>
-              {!editingState.isEditing && (
+              {!editingState.isEditing && isOwner && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -369,9 +380,11 @@ export default function CampaignDetailsPage() {
                     <p className="text-xs text-gray-400 mb-4">
                       Add context to help AI generate better summaries
                     </p>
-                    <Button size="sm" onClick={handleEditPrompt}>
-                      Add Context
-                    </Button>
+                    {isOwner && (
+                      <Button size="sm" onClick={handleEditPrompt}>
+                        Add Context
+                      </Button>
+                    )}
                   </div>
                 )}
                 {campaign.systemPrompt && (
@@ -384,6 +397,9 @@ export default function CampaignDetailsPage() {
               </div>
             )}
           </div>
+
+          <MembersCard campaignId={campaignId} />
+          {isOwner && <InviteLinkCard campaignId={campaignId} />}
         </div>
       </div>
     </div>

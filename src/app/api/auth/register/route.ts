@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { authRateLimiter, getRateLimitIdentifier } from '@/lib/rate-limiter';
 import { validateWhitelistAccess } from '@/lib/whitelist';
 import { logger } from '@/lib/logger';
+import { attachPendingInvitations } from '@/lib/invitations';
 
 const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -73,6 +74,14 @@ export async function POST(request: NextRequest) {
         name,
       },
     });
+
+    // Convert any pending campaign invitations addressed to this email into
+    // memberships now that the account exists.
+    try {
+      await attachPendingInvitations(user.id, user.email);
+    } catch (err) {
+      logger.error('Failed to attach pending invitations on register', err as Error);
+    }
 
     // Remove password from response
     const { password: _password, ...userWithoutPassword } = user;

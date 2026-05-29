@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth-utils';
+import { requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { logger } from '@/lib/logger';
 
@@ -9,23 +9,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { error: authError, user } = await requireAuth();
-    if (authError) return authError;
-
     const sessionId = (await params).id;
+
+    // Any member of the session's campaign may read its progress.
+    const access = await requireSessionAccess(sessionId, 'any');
+    if (!access.ok) return access.response;
 
     // Get session with progress information
     const session = await db.getSessionById(sessionId);
     if (!session) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-
-    // Check if user owns the campaign this session belongs to
-    const campaign = await db.getCampaignById(session.campaignId);
-    if (!campaign || campaign.userId !== user.id) {
       return NextResponse.json(
         { error: 'Session not found' },
         { status: 404 }

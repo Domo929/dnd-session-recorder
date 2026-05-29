@@ -6,6 +6,7 @@ import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { validateWhitelistAccess, isEmailWhitelisted, getWhitelistMessage } from '@/lib/whitelist';
 import { logger } from '@/lib/logger';
+import { attachPendingInvitations } from '@/lib/invitations';
 
 
 export const authOptions: NextAuthOptions = {
@@ -146,6 +147,15 @@ export const authOptions: NextAuthOptions = {
   events: {
     async signIn({ user, account, profile, isNewUser }) {
       logger.trace('SignIn event - Success', { user, account, profile, isNewUser });
+      // Convert any pending campaign invitations for this email into
+      // memberships. Idempotent — safe to run on every sign-in.
+      try {
+        if (user?.id) {
+          await attachPendingInvitations(user.id, user.email);
+        }
+      } catch (error) {
+        logger.error('Failed to attach pending invitations on signIn', error as Error);
+      }
     },
     async signOut({ session, token }) {
       logger.trace('SignOut event', { session, token });
