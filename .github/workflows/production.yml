@@ -1,10 +1,10 @@
 name: Production Deployment
 
+# DISABLED on this fork: upstream Fly.io production deploy. Kept on-disk for
+# upstream-PR parity, but set to manual-only (workflow_dispatch) so it never
+# auto-runs here — this fork deploys to Azure via the dnd-recorder-deploy repo.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: '22'

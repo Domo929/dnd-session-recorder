@@ -1,11 +1,8 @@
 name: Post-Merge CI
 
+# Auto-runs DISABLED on this fork (upstream CI/deploy pipeline). Kept on-disk
+# for upstream-PR parity; manual-only via workflow_dispatch.
 on:
-  push:
-    branches: [main, staging]
-  schedule:
-    # Run nightly at 2 AM UTC
-    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       test_suite:

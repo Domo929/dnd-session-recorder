@@ -1,9 +1,9 @@
 name: Pull Request CI
 
+# Auto-runs DISABLED on this fork (upstream PR CI). Kept on-disk for upstream-PR
+# parity; manual-only via workflow_dispatch.
 on:
-  pull_request:
-    branches: [main, staging, develop]
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: '22'

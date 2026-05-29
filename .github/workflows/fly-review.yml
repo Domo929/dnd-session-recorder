@@ -1,8 +1,8 @@
 name: Deploy Review App
+# Auto-runs DISABLED on this fork: upstream Fly.io PR review apps. Kept on-disk
+# for upstream-PR parity; manual-only via workflow_dispatch.
 on:
-  # Run this workflow on every PR event. Existing review apps will be updated when the PR is updated.
-  pull_request:
-    types: [opened, reopened, synchronize, closed]
+  workflow_dispatch:
 
 env:
   FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
