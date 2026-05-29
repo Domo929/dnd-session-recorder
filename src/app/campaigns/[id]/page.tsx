@@ -8,6 +8,7 @@ import { Calendar, Clock, BookOpen, ArrowLeft, AlertCircle, Play, Edit3, Save, X
 import Button from '@/components/ui/Button';
 import MembersCard from '@/components/MembersCard';
 import InviteLinkCard from '@/components/InviteLinkCard';
+import VoiceLibraryCard from '@/components/VoiceLibraryCard';
 import { logger } from '@/lib/logger';
 
 interface Campaign {
@@ -399,6 +400,7 @@ export default function CampaignDetailsPage() {
           </div>
 
           <MembersCard campaignId={campaignId} />
+          <VoiceLibraryCard campaignId={campaignId} />
           {isOwner && <InviteLinkCard campaignId={campaignId} />}
         </div>
       </div>
