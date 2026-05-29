@@ -1,6 +1,7 @@
 import { unlink, access } from 'fs/promises';
 import { constants } from 'fs';
 import { db } from './database';
+import { getStorageService } from './storage';
 import { logger } from '@/lib/logger';
 
 export class FileCleanupService {
@@ -23,8 +24,18 @@ export class FileCleanupService {
         return;
       }
 
-      // Delete the main audio file
-      await this.deleteFileIfExists(upload.path);
+      // Delete the main audio file (blob or local disk)
+      if (upload.storage === 'blob') {
+        try {
+          await getStorageService().delete(upload.path);
+          logger.debug('Deleted blob', { path: upload.path });
+        } catch (error) {
+          logger.error('Error deleting blob', error as Error, { path: upload.path });
+          throw error;
+        }
+      } else {
+        await this.deleteFileIfExists(upload.path);
+      }
 
       // Delete chunk files if they exist
       if (upload.chunkPaths) {

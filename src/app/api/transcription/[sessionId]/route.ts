@@ -4,6 +4,8 @@ import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
 import { splitAudioBySize, cleanupChunkFiles } from '@/services/audioProcessing';
 import { transcribeAudio, isAiMocked, maxTranscriptionChunkSizeMB } from '@/lib/ai';
+import { getStorageService } from '@/services/storage';
+import { withMaterializedAudio } from '@/services/storage/materialize';
 import { isTestAccount } from '@/lib/whitelist';
 import fs from 'fs';
 import { logger } from '@/lib/logger';
@@ -101,9 +103,15 @@ export async function POST(
       );
     }
 
-    const fullPath = session.upload.path;
+    const upload = session.upload;
+    const fullPath = upload.path;
 
-    if (!fs.existsSync(fullPath)) {
+    const audioExists =
+      upload.storage === 'blob'
+        ? (await getStorageService().head(upload.path)).exists
+        : fs.existsSync(fullPath);
+
+    if (!audioExists) {
       logger.warn('Audio file not found, performing reconciliation', {
         sessionId,
         path: fullPath
@@ -151,91 +159,95 @@ export async function POST(
       transcriptionProgress: 5,
     });
 
-    // Split audio into provider-sized chunks (under each provider's request limit)
-    const chunks = await splitAudioBySize(fullPath, { maxChunkSizeMB: maxTranscriptionChunkSizeMB() });
-    const chunkPaths = chunks.map(c => c.path);
-    logger.info('Audio split into chunks', {
-      sessionId,
-      chunkCount: chunkPaths.length
-    });
-    
-    // Update progress: Chunking complete, starting transcription
-    await db.updateTranscriptionProgress(sessionId, {
-      currentStep: 'transcribing',
-      totalChunks: chunkPaths.length,
-      chunksCompleted: 0,
-      transcriptionProgress: 10,
-    });
-
-    const allText: string[] = [];
-    
-    // Set timeout for each chunk: 30 minutes per chunk
-    const CHUNK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-    for (let i = 0; i < chunkPaths.length; i++) {
-      const chunkPath = chunkPaths[i];
-      logger.debug('Transcribing chunk', {
+    // Split audio into provider-sized chunks (under each provider's request limit).
+    // For blob-backed uploads the audio is downloaded to a temp file first and
+    // removed afterward; local uploads use their on-disk path directly.
+    const { fullText, chunkPaths } = await withMaterializedAudio(upload, async (localPath) => {
+      const chunks = await splitAudioBySize(localPath, { maxChunkSizeMB: maxTranscriptionChunkSizeMB() });
+      const chunkPaths = chunks.map(c => c.path);
+      logger.info('Audio split into chunks', {
         sessionId,
-        chunkNumber: i + 1,
-        totalChunks: chunkPaths.length,
-        path: chunkPath
+        chunkCount: chunkPaths.length
       });
 
-      try {
-        // Read the file buffer for AI SDK
-        const fileBuffer = fs.readFileSync(chunkPath);
+      // Update progress: Chunking complete, starting transcription
+      await db.updateTranscriptionProgress(sessionId, {
+        currentStep: 'transcribing',
+        totalChunks: chunkPaths.length,
+        chunksCompleted: 0,
+        transcriptionProgress: 10,
+      });
 
-        const transcription = await withTimeout(
-          transcribeAudio(fileBuffer),
-          CHUNK_TIMEOUT_MS,
-          `Transcription timeout: Chunk ${i + 1}/${chunkPaths.length} took longer than 30 minutes`
-        );
+      const allText: string[] = [];
 
-        if (!transcription.text) {
-          throw new Error(`No transcription text received for chunk ${i + 1}`);
+      // Set timeout for each chunk: 30 minutes per chunk
+      const CHUNK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+      for (let i = 0; i < chunkPaths.length; i++) {
+        const chunkPath = chunkPaths[i];
+        logger.debug('Transcribing chunk', {
+          sessionId,
+          chunkNumber: i + 1,
+          totalChunks: chunkPaths.length,
+          path: chunkPath
+        });
+
+        try {
+          // Read the file buffer for AI SDK
+          const fileBuffer = fs.readFileSync(chunkPath);
+
+          const transcription = await withTimeout(
+            transcribeAudio(fileBuffer),
+            CHUNK_TIMEOUT_MS,
+            `Transcription timeout: Chunk ${i + 1}/${chunkPaths.length} took longer than 30 minutes`
+          );
+
+          if (!transcription.text) {
+            throw new Error(`No transcription text received for chunk ${i + 1}`);
+          }
+
+          allText.push(transcription.text);
+          logger.info('Chunk transcribed successfully', {
+            sessionId,
+            chunkNumber: i + 1,
+            totalChunks: chunkPaths.length
+          });
+
+          // Update progress after each chunk
+          const progressPercentage = Math.floor(10 + ((i + 1) / chunkPaths.length) * 80); // 10-90% for transcription
+          await db.updateTranscriptionProgress(sessionId, {
+            chunksCompleted: i + 1,
+            transcriptionProgress: progressPercentage,
+          });
+        } catch (chunkError) {
+          logger.error('Chunk transcription failed', chunkError as Error, {
+            sessionId,
+            chunkNumber: i + 1,
+            totalChunks: chunkPaths.length
+          });
+
+          // Clean up any chunks we created
+          cleanupChunkFiles(chunkPaths, localPath);
+
+          throw new Error(
+            `Failed to transcribe chunk ${i + 1}/${chunkPaths.length}: ${chunkError instanceof Error ? chunkError.message : String(chunkError)}`
+          );
         }
-
-        allText.push(transcription.text);
-        logger.info('Chunk transcribed successfully', {
-          sessionId,
-          chunkNumber: i + 1,
-          totalChunks: chunkPaths.length
-        });
-
-        // Update progress after each chunk
-        const progressPercentage = Math.floor(10 + ((i + 1) / chunkPaths.length) * 80); // 10-90% for transcription
-        await db.updateTranscriptionProgress(sessionId, {
-          chunksCompleted: i + 1,
-          transcriptionProgress: progressPercentage,
-        });
-      } catch (chunkError) {
-        logger.error('Chunk transcription failed', chunkError as Error, {
-          sessionId,
-          chunkNumber: i + 1,
-          totalChunks: chunkPaths.length
-        });
-
-        // Clean up any chunks we created
-        cleanupChunkFiles(chunkPaths, fullPath);
-
-        throw new Error(
-          `Failed to transcribe chunk ${i + 1}/${chunkPaths.length}: ${chunkError instanceof Error ? chunkError.message : String(chunkError)}`
-        );
       }
-    }
-    
-    // Update progress: Starting stitching
-    await db.updateTranscriptionProgress(sessionId, {
-      currentStep: 'stitching',
-      transcriptionProgress: 90,
+
+      // Update progress: Starting stitching
+      await db.updateTranscriptionProgress(sessionId, {
+        currentStep: 'stitching',
+        transcriptionProgress: 90,
+      });
+
+      // Clean up chunk files (the materialized original is removed by withMaterializedAudio)
+      cleanupChunkFiles(chunkPaths, localPath);
+      logger.info('All chunks transcribed and cleaned up', { sessionId });
+
+      // Combine all text chunks into a single transcription
+      return { fullText: allText.join(' '), chunkPaths };
     });
-
-    // Clean up chunk files (except original)
-    cleanupChunkFiles(chunkPaths, fullPath);
-    logger.info('All chunks transcribed and cleaned up', { sessionId });
-
-    // Combine all text chunks into a single transcription
-    const fullText = allText.join(' ');
 
     // Save transcription to database
     await db.saveTranscription(sessionId, fullText);
