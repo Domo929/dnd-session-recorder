@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, Calendar, BookOpen, Plus, FileAudio, CheckCircle } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { logger } from '@/lib/logger';
+import { uploadFileToBlob } from '@/lib/uploadToBlob';
 
 interface Campaign {
   id: string;
@@ -88,6 +89,7 @@ function SessionUploadPageContent() {
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Get uploadId and campaignId from query params if present
   const preSelectedUploadId = searchParams.get('uploadId');
@@ -252,16 +254,23 @@ function SessionUploadPageContent() {
     try {
       // Use atomic session creation endpoint with file upload
       if (uploadState.mode === 'new' && uploadState.selectedFile) {
-        // Atomic creation: upload file + create session in one request
-        const formDataToSend = new FormData();
-        formDataToSend.append('title', formState.title);
-        formDataToSend.append('campaign_id', formState.campaignId);
-        formDataToSend.append('session_date', new Date(formState.sessionDate).toISOString());
-        formDataToSend.append('audio', uploadState.selectedFile);
+        // Step 1+2: upload the audio straight to Blob storage (with progress).
+        setUploadProgress(0);
+        const blob = await uploadFileToBlob(uploadState.selectedFile, setUploadProgress);
 
+        // Step 3: atomic create — upload metadata + create session in one request.
         const response = await fetch('/api/sessions/create-with-upload', {
           method: 'POST',
-          body: formDataToSend,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: formState.title,
+            campaign_id: formState.campaignId,
+            session_date: new Date(formState.sessionDate).toISOString(),
+            blobPath: blob.blobPath,
+            originalName: blob.originalName,
+            mimetype: blob.mimetype,
+            size: blob.size,
+          }),
         });
 
         const result = await response.json();
@@ -340,6 +349,7 @@ function SessionUploadPageContent() {
       }
       alert(`Failed to create session: ${errorMessage}`);
       setIsSubmitting(false);
+      setUploadProgress(0);
     }
   };
 
@@ -575,6 +585,21 @@ function SessionUploadPageContent() {
             </div>
           )}
         </div>
+
+        {/* Upload progress */}
+        {isSubmitting && uploadState.mode === 'new' && uploadState.selectedFile && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>Uploading audio…</span>
+              <span>{Math.round(uploadProgress * 100)}%</span>
+            </div>
+            <progress
+              className="w-full h-2"
+              value={uploadProgress}
+              max={1}
+            />
+          </div>
+        )}
 
         {/* Submit Button */}
         <div className="flex justify-end space-x-4">

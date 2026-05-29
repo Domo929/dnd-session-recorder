@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Upload } from '../types';
 import { logger } from '@/lib/logger';
+import { uploadFileToBlob } from '@/lib/uploadToBlob';
 
 interface UseUploadStateProps {
   sessionId: string;
@@ -20,6 +21,7 @@ interface UseUploadStateProps {
 export function useUploadState({ sessionId }: UseUploadStateProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showExistingUploads, setShowExistingUploads] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const queryClient = useQueryClient();
 
   // Fetch existing uploads (only when needed)
@@ -37,13 +39,15 @@ export function useUploadState({ sessionId }: UseUploadStateProps) {
   // Upload new file mutation
   const uploadAudioMutation = useMutation({
     mutationFn: async (file: File) => {
-      // Upload file to storage
-      const uploadFormData = new FormData();
-      uploadFormData.append('audio', file);
+      setUploadProgress(0);
+
+      // Upload bytes straight to Blob storage, then create the Upload row.
+      const blob = await uploadFileToBlob(file, setUploadProgress);
 
       const uploadResponse = await fetch('/api/uploads', {
         method: 'POST',
-        body: uploadFormData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(blob),
       });
 
       if (!uploadResponse.ok) {
@@ -83,6 +87,7 @@ export function useUploadState({ sessionId }: UseUploadStateProps) {
     },
     onSuccess: () => {
       setSelectedFile(null);
+      setUploadProgress(0);
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
       queryClient.invalidateQueries({ queryKey: ['transcriptions', sessionId] });
     },
@@ -137,6 +142,7 @@ export function useUploadState({ sessionId }: UseUploadStateProps) {
     uploads,
     uploadFile: uploadAudioMutation.mutate,
     isUploading: uploadAudioMutation.isPending,
+    uploadProgress,
     uploadError: uploadAudioMutation.error,
     linkExistingUpload: linkExistingUploadMutation.mutate,
     isLinking: linkExistingUploadMutation.isPending,
