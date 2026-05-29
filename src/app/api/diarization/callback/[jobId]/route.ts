@@ -196,7 +196,7 @@ export async function POST(
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    await db.completeDiarizationJob({ sessionId, jobId, rows });
+    await db.completeDiarizationJob({ sessionId, jobId, uploadId: job.session.uploadId, rows });
 
     logger.info('Diarization callback processed', {
       jobId,

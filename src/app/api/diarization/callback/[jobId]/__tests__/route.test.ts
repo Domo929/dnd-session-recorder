@@ -144,6 +144,7 @@ describe('POST /api/diarization/callback/[jobId]', () => {
     expect(db.completeDiarizationJob).toHaveBeenCalledWith({
       sessionId: 'sess_1',
       jobId: 'job_1',
+      uploadId: 'upl_1',
       rows: [
         { startTime: 0, endTime: 2, text: 'hello there', confidence: 0.9, speakerClusterId: 'cl_0' },
       ],

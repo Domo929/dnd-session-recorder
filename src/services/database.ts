@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma';
 import { Prisma, Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster, SessionNpcSuggestion } from '@prisma/client';
 import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
+import { getRetentionConfig } from '@/lib/retention';
 
 export interface CreateCampaignData {
   name: string;
@@ -819,6 +820,7 @@ export class DatabaseService {
   async completeDiarizationJob(args: {
     sessionId: string;
     jobId: string;
+    uploadId?: string | null;
     rows: { startTime: number; endTime: number; text: string; confidence: number | null; speakerClusterId: string }[];
   }): Promise<void> {
     await prisma.$transaction(async (tx) => {
@@ -843,6 +845,13 @@ export class DatabaseService {
         where: { id: args.jobId },
         data: { status: 'completed', finishedAt: new Date(), attemptCount: { increment: 1 } },
       });
+      // Speaker-labeled audio enters its retention window once diarized.
+      if (args.uploadId) {
+        await tx.upload.update({
+          where: { id: args.uploadId },
+          data: { audioExpiresAt: new Date(Date.now() + getRetentionConfig().audioRetentionMs) },
+        });
+      }
     });
   }
 
@@ -1168,6 +1177,45 @@ export class DatabaseService {
     await prisma.gamingSession.update({
       where: { id: sessionId },
       data: { needsResummarize: false },
+    });
+  }
+
+  // ── Retention (speaker-labels cron) ───────────────────────────────────────
+
+  /** Uploads whose session audio has passed its retention window. */
+  async getExpiredAudioUploads(
+    now: Date,
+  ): Promise<{ id: string; path: string; storage: UploadStorage }[]> {
+    return prisma.upload.findMany({
+      where: { audioExpiresAt: { not: null, lt: now } },
+      select: { id: true, path: true, storage: true },
+    });
+  }
+
+  /** Mark an upload's audio as purged: clears the expiry and tombstones status. */
+  async markAudioPurged(uploadId: string): Promise<void> {
+    await prisma.upload.update({
+      where: { id: uploadId },
+      data: { audioExpiresAt: null, status: 'cleaned' },
+    });
+  }
+
+  /** Unknown-cluster snippets whose review window has elapsed (never tagged). */
+  async getExpiredSnippetClusters(
+    now: Date,
+  ): Promise<{ id: string; snippetBlobPath: string }[]> {
+    const rows = await prisma.sessionSpeakerCluster.findMany({
+      where: { snippetExpiresAt: { not: null, lt: now }, snippetBlobPath: { not: null } },
+      select: { id: true, snippetBlobPath: true },
+    });
+    return rows.filter((r): r is { id: string; snippetBlobPath: string } => r.snippetBlobPath !== null);
+  }
+
+  /** Drop a cluster's expired snippet (leaves the cluster row in place). */
+  async clearClusterSnippet(clusterId: string): Promise<void> {
+    await prisma.sessionSpeakerCluster.update({
+      where: { id: clusterId },
+      data: { snippetBlobPath: null, snippetExpiresAt: null },
     });
   }
 
