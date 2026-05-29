@@ -82,6 +82,13 @@ model Campaign {
   inviteLinks    InviteLink[]
   invitations    Invitation[]
 
+  // Speaker-labels: campaign-level defaults + the cluster relation for the
+  // campaign-wide lazy-tag cascade (design Section 1 / 3).
+  defaultTranscriptionMode TranscriptionMode       @default(basic) @map("default_transcription_mode")
+  diarizationEnabled       Boolean                 @default(true) @map("diarization_enabled")
+  npcInferenceEnabled      Boolean                 @default(true) @map("npc_inference_enabled")
+  speakerClusters          SessionSpeakerCluster[]
+
   @@unique([userId, name])
   @@map("campaigns")
 }
@@ -100,6 +107,9 @@ model Member {
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Speaker-labels: a member's enrolled (and auto-promoted) voice samples.
+  voiceSamples VoiceSample[]
 
   @@unique([campaignId, userId])
   @@index([userId])
@@ -165,12 +175,22 @@ model GamingSession {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  upload         Upload?         @relation(fields: [uploadId], references: [id], onDelete: Cascade)
-  summary        Summary?
-  dmTodoList     DmTodoList?
-  transcriptions Transcription[]
+  // Speaker-labels: per-session mode + diarization/NPC pipeline status (design
+  // Section 1 / 4). Basic-mode sessions keep defaults and behave as today.
+  transcriptionMode  TranscriptionMode @default(basic) @map("transcription_mode")
+  diarizationStatus  DiarizationStatus @default(none) @map("diarization_status")
+  npcInferenceStatus InferenceStatus   @default(none) @map("npc_inference_status")
+  needsResummarize   Boolean           @default(false) @map("needs_resummarize")
+
+  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign        Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  upload          Upload?                 @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  summary         Summary?
+  dmTodoList      DmTodoList?
+  transcriptions  Transcription[]
+  speakerClusters SessionSpeakerCluster[]
+  diarizationJobs DiarizationJob[]
+  npcSuggestions  SessionNpcSuggestion[]
 
   @@map("gaming_sessions")
 }
@@ -185,6 +205,12 @@ model Transcription {
   createdAt  DateTime      @default(now()) @map("created_at")
   session    GamingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  // Speaker-labels: nullable link to the speaker cluster this segment belongs to.
+  // Null for basic-mode rows. Extends the existing model (no parallel table).
+  speakerClusterId String?                @map("speaker_cluster_id")
+  speakerCluster   SessionSpeakerCluster? @relation(fields: [speakerClusterId], references: [id], onDelete: SetNull)
+
+  @@index([speakerClusterId])
   @@map("transcriptions")
 }
 
@@ -243,4 +269,127 @@ model Upload {
   gamingSessions GamingSession[]
 
   @@map("uploads")
+}
+
+// =============================================================================
+// Speaker labels (design: docs/plans/2026-05-27-speaker-labels-design.md)
+// =============================================================================
+
+enum TranscriptionMode {
+  basic
+  speaker_labeled
+}
+
+enum DiarizationStatus {
+  none
+  queued
+  running
+  completed
+  failed
+}
+
+enum InferenceStatus {
+  none
+  pending
+  completed
+  failed
+}
+
+enum VoiceSampleSource {
+  enrolled // recorded via the Voice Library UI
+  tagged_from_cluster // promoted from a diarized cluster after the DM tagged it
+}
+
+// A labeled voice belonging to a campaign member: a player character voice
+// ("Thorin", "Thorin (drunk)"), the DM narrator, or a recurring NPC. Each row
+// stores a 192-dim ECAPA-TDNN embedding (float32 little-endian, 768 bytes).
+model VoiceSample {
+  id                String            @id @default(cuid())
+  memberId          String            @map("member_id")
+  label             String // "Thorin", "Narrator", "Skritch"
+  audioPath         String            @map("audio_path") // Blob path in voice-samples
+  embedding         Bytes // 192 * float32 = 768 bytes
+  embeddingModel    String            @map("embedding_model") // "ecapa-tdnn-v1"
+  durationMs        Int               @map("duration_ms")
+  source            VoiceSampleSource @default(enrolled)
+  originalClusterId String?           @map("original_cluster_id") // set when source = tagged_from_cluster
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  member   Member                  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  clusters SessionSpeakerCluster[]
+
+  @@unique([memberId, label])
+  @@index([memberId])
+  @@map("voice_samples")
+}
+
+// One diarized speaker within a single session, with its mean embedding and the
+// label resolved by matching (or manual tagging). campaignId is denormalized so
+// the lazy-tag cascade can scan all unknown clusters campaign-wide.
+model SessionSpeakerCluster {
+  id                String    @id @default(cuid())
+  sessionId         String    @map("session_id")
+  campaignId        String    @map("campaign_id") // denormalized for cascade scans
+  clusterIdx        Int       @map("cluster_idx") // 0..N-1 within session
+  embeddingCentroid Bytes     @map("embedding_centroid")
+  snippetBlobPath   String?   @map("snippet_blob_path") // 10s representative clip
+  snippetExpiresAt  DateTime? @map("snippet_expires_at") // null = kept forever
+  segmentCount      Int       @map("segment_count")
+  totalDurationMs   Int       @map("total_duration_ms")
+  voiceSampleId     String?   @map("voice_sample_id") // matched OR after manual tag
+  displayLabel      String    @map("display_label") // "Thorin", "DM (narration)", "DM (Unknown #2)"
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  session        GamingSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  campaign       Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  voiceSample    VoiceSample?          @relation(fields: [voiceSampleId], references: [id], onDelete: SetNull)
+  transcriptions Transcription[]
+  npcSuggestion  SessionNpcSuggestion?
+
+  @@unique([sessionId, clusterIdx])
+  @@index([voiceSampleId])
+  @@index([campaignId])
+  @@map("session_speaker_clusters")
+}
+
+// One on-demand GPU diarization run for a session (Azure Container Instance).
+model DiarizationJob {
+  id              String            @id @default(cuid())
+  sessionId       String            @map("session_id")
+  status          DiarizationStatus
+  aciResourceId   String?           @map("aci_resource_id")
+  hmacSecret      String            @map("hmac_secret") // hex, 32 bytes
+  attemptCount    Int               @default(0) @map("attempt_count")
+  region          String?
+  bypassBudget    Boolean           @default(false) @map("bypass_budget")
+  startedAt       DateTime?         @map("started_at")
+  finishedAt      DateTime?         @map("finished_at")
+  errorMessage    String?           @map("error_message") @db.Text
+  costEstimateUsd Decimal?          @map("cost_estimate_usd")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  session GamingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("diarization_jobs")
+}
+
+// An LLM-inferred name for an unknown speaker cluster. Never auto-applied; the
+// DM accepts/rejects/edits.
+model SessionNpcSuggestion {
+  id            String    @id @default(cuid())
+  sessionId     String    @map("session_id")
+  clusterId     String    @unique @map("cluster_id")
+  suggestedName String    @map("suggested_name")
+  confidence    String // low | medium | high
+  reasoning     String    @db.Text
+  status        String    @default("pending") // pending | accepted | rejected
+  createdAt     DateTime  @default(now()) @map("created_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?   @map("resolved_by") // userId
+
+  session GamingSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  cluster SessionSpeakerCluster @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+
+  @@map("session_npc_suggestions")
 }
