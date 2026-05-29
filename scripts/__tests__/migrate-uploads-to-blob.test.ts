@@ -18,7 +18,7 @@ function makeDeps(rows: ReturnType<typeof makeRow>[], over: Partial<MigrationDep
     markMigrated: vi.fn(async () => {}),
     storage: {
       uploadFile: vi.fn(async () => {}),
-      head: vi.fn(async (blobPath: string) => ({ exists: true, size: rows[0]?.size ?? 0 })),
+      head: vi.fn(async (_blobPath: string) => ({ exists: true, size: rows[0]?.size ?? 0 })),
     },
     fileSize: vi.fn((p: string) => (sizes.has(p) ? (sizes.get(p) as number) : null)),
     unlink: vi.fn(),

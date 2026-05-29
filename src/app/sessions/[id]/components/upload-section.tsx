@@ -16,6 +16,7 @@ export function UploadSection({ sessionId }: UploadSectionProps) {
     uploads,
     uploadFile,
     isUploading,
+    uploadProgress,
     uploadError,
     linkExistingUpload,
     linkingUploadId,
@@ -116,6 +117,22 @@ export function UploadSection({ sessionId }: UploadSectionProps) {
                       </button>
                     )}
                   </div>
+                  {isUploading && (
+                    <div className="space-y-1">
+                      <div
+                        className="flex justify-between text-xs"
+                        style={{ color: 'var(--sp-fg-3)' }}
+                      >
+                        <span>Uploading audio…</span>
+                        <span>{Math.round(uploadProgress * 100)}%</span>
+                      </div>
+                      <progress
+                        className="w-full h-2"
+                        value={uploadProgress}
+                        max={1}
+                      />
+                    </div>
+                  )}
                   <p className="text-sm" style={{ color: 'var(--sp-fg-3)' }}>
                     Or{' '}
                     <button
