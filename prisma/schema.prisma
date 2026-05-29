@@ -300,29 +300,32 @@ enum VoiceSampleSource {
   tagged_from_cluster // promoted from a diarized cluster after the DM tagged it
 }
 
-// Provenance of a single exemplar embedding within a voice's fingerprint.
+// Provenance of a session-learned exemplar embedding within a voice's
+// fingerprint. The enrollment/tagged seed is NOT an exemplar row — it lives on
+// VoiceSample.embedding — so every exemplar is learned from a real session.
 enum VoiceExemplarSource {
-  enrolled // the original recorded enrollment seed (pinned)
   auto_matched // learned from a high-confidence automatic match (>= LEARN_THRESHOLD)
   dm_confirmed // learned after the DM explicitly confirmed/tagged a cluster
-  tagged_from_cluster // seeded from a lazy-tagged unknown cluster
 }
 
 // A labeled voice belonging to a campaign member: a player character voice
 // ("Thorin", "Thorin (drunk)"), the DM narrator, or a recurring NPC. Each voice
-// is a self-refining "fingerprint": a capped set of VoiceExemplar embeddings.
-// The legacy `embedding` column is retained as the canonical, pinned seed.
+// is a self-refining "fingerprint": the seed embedding (`embedding`, from
+// enrollment or a tagged cluster) plus a capped set of session-learned
+// VoiceExemplar rows. The seed is always part of matching and is only removed by
+// deleting the whole voice; learned exemplars are evicted oldest-first past the
+// per-voice cap.
 model VoiceSample {
   id                String            @id @default(cuid())
   memberId          String            @map("member_id")
   label             String // "Thorin", "Narrator", "Skritch"
   audioPath         String            @map("audio_path") // Blob path in voice-samples
-  embedding         Bytes // 192 * float32 = 768 bytes; the pinned seed exemplar
+  embedding         Bytes // 192 * float32 = 768 bytes; the seed exemplar
   embeddingModel    String            @map("embedding_model") // "ecapa-tdnn-v1"
   durationMs        Int               @map("duration_ms")
   source            VoiceSampleSource @default(enrolled)
   originalClusterId String?           @map("original_cluster_id") // set when source = tagged_from_cluster
-  exemplarCount     Int               @default(1) @map("exemplar_count") // capped at MAX_EXEMPLARS_PER_VOICE
+  exemplarCount     Int               @default(0) @map("exemplar_count") // learned exemplars only; capped at MAX_EXEMPLARS_PER_VOICE
   createdAt         DateTime          @default(now()) @map("created_at")
 
   member    Member                  @relation(fields: [memberId], references: [id], onDelete: Cascade)
@@ -334,18 +337,18 @@ model VoiceSample {
   @@map("voice_samples")
 }
 
-// A single embedding within a voice's fingerprint. The original enrollment is
-// `pinned` and never evicted; high-confidence session matches accrete as
-// unpinned exemplars (oldest unpinned evicted past the per-voice cap). Matching
-// scores a cluster as max(cosine) over a voice's exemplars.
+// A single session-learned embedding within a voice's fingerprint. Always tied
+// to the session it was learned from (sourceSessionId is non-null), so
+// @@unique([voiceSampleId, sourceSessionId]) makes learning fully idempotent
+// across re-processing. Matching scores a cluster as max(cosine) over a voice's
+// seed embedding plus these exemplars; eviction drops the oldest past the cap.
 model VoiceExemplar {
   id                  String              @id @default(cuid())
   voiceSampleId       String              @map("voice_sample_id")
   embedding           Bytes // 192 * float32 = 768 bytes
   embeddingModel      String              @map("embedding_model") // "ecapa-tdnn-v1"
-  source              VoiceExemplarSource @default(enrolled)
-  pinned              Boolean             @default(false) // true only for the enrollment seed
-  sourceSessionId     String?             @map("source_session_id") // session this exemplar was learned from
+  source              VoiceExemplarSource @default(auto_matched)
+  sourceSessionId     String              @map("source_session_id") // session this exemplar was learned from
   similarityAtCapture Float?              @map("similarity_at_capture") // match score when learned
   durationMs          Int                 @map("duration_ms")
   createdAt           DateTime            @default(now()) @map("created_at")

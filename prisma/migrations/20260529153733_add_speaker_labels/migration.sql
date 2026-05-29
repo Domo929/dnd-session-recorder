@@ -11,7 +11,7 @@ CREATE TYPE "InferenceStatus" AS ENUM ('none', 'pending', 'completed', 'failed')
 CREATE TYPE "VoiceSampleSource" AS ENUM ('enrolled', 'tagged_from_cluster');
 
 -- CreateEnum
-CREATE TYPE "VoiceExemplarSource" AS ENUM ('enrolled', 'auto_matched', 'dm_confirmed', 'tagged_from_cluster');
+CREATE TYPE "VoiceExemplarSource" AS ENUM ('auto_matched', 'dm_confirmed');
 
 -- AlterTable
 ALTER TABLE "campaigns" ADD COLUMN     "default_transcription_mode" "TranscriptionMode" NOT NULL DEFAULT 'basic',
@@ -38,7 +38,7 @@ CREATE TABLE "voice_samples" (
     "duration_ms" INTEGER NOT NULL,
     "source" "VoiceSampleSource" NOT NULL DEFAULT 'enrolled',
     "original_cluster_id" TEXT,
-    "exemplar_count" INTEGER NOT NULL DEFAULT 1,
+    "exemplar_count" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "voice_samples_pkey" PRIMARY KEY ("id")
@@ -50,9 +50,8 @@ CREATE TABLE "voice_exemplars" (
     "voice_sample_id" TEXT NOT NULL,
     "embedding" BYTEA NOT NULL,
     "embedding_model" TEXT NOT NULL,
-    "source" "VoiceExemplarSource" NOT NULL DEFAULT 'enrolled',
-    "pinned" BOOLEAN NOT NULL DEFAULT false,
-    "source_session_id" TEXT,
+    "source" "VoiceExemplarSource" NOT NULL DEFAULT 'auto_matched',
+    "source_session_id" TEXT NOT NULL,
     "similarity_at_capture" DOUBLE PRECISION,
     "duration_ms" INTEGER NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

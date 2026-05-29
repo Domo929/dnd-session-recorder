@@ -36,13 +36,13 @@ Additive Prisma changes on the aligned schema (design Section 1):
 - Unit tests: cosine math, serialization round-trip, matching threshold logic
   (mock the ONNX session — no real model needed in CI).
 - **Self-refining fingerprints** (design: `2026-05-29-self-refining-fingerprints-design.md`):
-  scoring = `max(cosine)` over a voice's `VoiceExemplar`s; campaign-best voice
-  vs `MATCH_THRESHOLD` (0.65); **person-level fallback** = max over a member's
-  voices vs `PERSON_FALLBACK_THRESHOLD` (0.55) → low-confidence attribution to
-  closest voice; learn-gate helper (`shouldLearn`: dm_confirmed OR score ≥
-  `LEARN_THRESHOLD` 0.80) and add-exemplar-with-eviction helper (cap
-  `MAX_EXEMPLARS_PER_VOICE` 10, never evict `pinned`, drop oldest unpinned).
-  All pure functions, unit-tested with synthetic embeddings.
+  scoring = `max(cosine)` over a voice's seed embedding + its `VoiceExemplar`s;
+  campaign-best voice vs `MATCH_THRESHOLD` (0.65); **person-level fallback** =
+  max over a member's voices vs `PERSON_FALLBACK_THRESHOLD` (0.55) →
+  low-confidence attribution to closest voice; learn-gate helper (`shouldLearn`:
+  dm_confirmed OR score ≥ `LEARN_THRESHOLD` 0.80) and add-exemplar-with-eviction
+  helper (cap `MAX_EXEMPLARS_PER_VOICE` 10, seed never evicted, drop oldest
+  learned exemplar). All pure functions, unit-tested with synthetic embeddings.
 
 ## SL-3 — Voice enrollment (Voice Library)
 
