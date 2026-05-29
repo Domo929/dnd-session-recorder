@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
+import { resolveTranscriptionMode } from '@/lib/transcriptionMode';
 import { logger } from '@/lib/logger';
 
 const createSessionSchema = z.object({
@@ -11,6 +12,7 @@ const createSessionSchema = z.object({
   upload_id: z.string().optional(),
   duration: z.number().int().positive().optional(),
   status: z.string().optional(),
+  transcription_mode: z.string().optional(),
 });
 
 export async function GET(request: Request) {
@@ -77,6 +79,11 @@ export async function POST(request: Request) {
       uploadId: validatedData.upload_id,
       duration: validatedData.duration,
       status: validatedData.status,
+      transcriptionMode: resolveTranscriptionMode({
+        requested: validatedData.transcription_mode,
+        campaignDefault: campaign.defaultTranscriptionMode,
+        voiceSampleCount: await db.countVoiceSamplesByCampaign(validatedData.campaign_id),
+      }).mode,
     });
 
     return NextResponse.json(gamingSession, { status: 201 });

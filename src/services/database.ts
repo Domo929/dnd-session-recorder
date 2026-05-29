@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource } from '@prisma/client';
+import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode } from '@prisma/client';
 
 export interface CreateCampaignData {
   name: string;
@@ -16,6 +16,7 @@ export interface CreateSessionData {
   uploadId?: string;
   duration?: number;
   status?: string;
+  transcriptionMode?: TranscriptionMode;
 }
 
 export interface CreateUploadData {
@@ -139,6 +140,7 @@ export class DatabaseService {
         uploadId: data.uploadId,
         duration: data.duration,
         status: data.status || (data.uploadId ? 'uploaded' : 'draft'),
+        ...(data.transcriptionMode && { transcriptionMode: data.transcriptionMode }),
       },
     });
   }
@@ -618,6 +620,13 @@ export class DatabaseService {
   }
 
   /** A member's voice samples, newest first, without the binary embedding. */
+  /** Number of enrolled voices across the whole campaign (any member). */
+  async countVoiceSamplesByCampaign(campaignId: string): Promise<number> {
+    return prisma.voiceSample.count({
+      where: { member: { campaignId } },
+    });
+  }
+
   async listVoiceSamplesByMember(memberId: string): Promise<VoiceSampleListItem[]> {
     return prisma.voiceSample.findMany({
       where: { memberId },

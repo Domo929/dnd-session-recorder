@@ -45,6 +45,12 @@ interface FormState {
   title: string;
   campaignId: string;
   sessionDate: string;
+  transcriptionMode: 'basic' | 'speaker_labeled';
+}
+
+interface VoiceSampleCount {
+  count: number;
+  defaultMode: 'basic' | 'speaker_labeled';
 }
 
 interface CampaignFormState {
@@ -74,7 +80,12 @@ function SessionUploadPageContent() {
     title: '',
     campaignId: '',
     sessionDate: new Date().toISOString().split('T')[0],
+    transcriptionMode: 'basic',
   });
+
+  // Tracks whether the user has manually picked a mode for the current campaign,
+  // so re-fetching defaults doesn't clobber their choice.
+  const [modeTouched, setModeTouched] = useState(false);
 
   const [uploadState, setUploadState] = useState<UploadState>({
     selectedFile: null,
@@ -116,6 +127,36 @@ function SessionUploadPageContent() {
     },
   });
 
+  // Fetch the campaign's enrolled-voice count + default mode to drive the
+  // transcription-mode toggle (only once a campaign is actually selected).
+  const { data: voiceInfo } = useQuery<VoiceSampleCount>({
+    queryKey: ['voice-sample-count', formState.campaignId],
+    enabled: !!formState.campaignId,
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/campaigns/${formState.campaignId}/voice-samples/count`,
+      );
+      if (!response.ok) throw new Error('Failed to fetch voice sample count');
+      return response.json();
+    },
+  });
+
+  // Pre-fill the mode from the campaign default once we know it, unless the user
+  // already chose one. Fail closed to basic when no voices are enrolled.
+  useEffect(() => {
+    if (!voiceInfo || modeTouched) return;
+    const canSpeakerLabel = voiceInfo.count > 0;
+    const prefilled =
+      voiceInfo.defaultMode === 'speaker_labeled' && canSpeakerLabel
+        ? 'speaker_labeled'
+        : 'basic';
+    setFormState((prev) =>
+      prev.transcriptionMode === prefilled
+        ? prev
+        : { ...prev, transcriptionMode: prefilled },
+    );
+  }, [voiceInfo, modeTouched]);
+
   // Pre-select upload if uploadId query param is present
   useEffect(() => {
     if (preSelectedUploadId && uploads.length > 0 && !uploadState.selectedUpload) {
@@ -151,6 +192,7 @@ function SessionUploadPageContent() {
       session_date: string;
       upload_id?: string;
       duration?: number;
+      transcription_mode?: string;
     }): Promise<Session> => {
       const response = await fetch('/api/sessions', {
         method: 'POST',
@@ -270,6 +312,7 @@ function SessionUploadPageContent() {
             originalName: blob.originalName,
             mimetype: blob.mimetype,
             size: blob.size,
+            transcription_mode: formState.transcriptionMode,
           }),
         });
 
@@ -296,6 +339,7 @@ function SessionUploadPageContent() {
           title: formState.title,
           campaign_id: formState.campaignId,
           session_date: new Date(formState.sessionDate).toISOString(),
+          transcription_mode: formState.transcriptionMode,
         });
 
         // Link the existing upload
@@ -326,6 +370,7 @@ function SessionUploadPageContent() {
           title: formState.title,
           campaign_id: formState.campaignId,
           session_date: new Date(formState.sessionDate).toISOString(),
+          transcription_mode: formState.transcriptionMode,
         });
 
         router.push(`/sessions/${session.id}?initialState=processing`);
@@ -392,6 +437,7 @@ function SessionUploadPageContent() {
                       openCreateCampaignModal();
                     } else {
                       setFormState((prev) => ({ ...prev, campaignId: e.target.value }));
+                      setModeTouched(false);
                     }
                   }}
                   className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -434,6 +480,76 @@ function SessionUploadPageContent() {
                   required
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Transcription
+              </label>
+              <fieldset
+                className="space-y-2"
+                disabled={!formState.campaignId}
+              >
+                <label className="flex items-start space-x-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="transcriptionMode"
+                    value="basic"
+                    checked={formState.transcriptionMode === 'basic'}
+                    onChange={() => {
+                      setFormState((prev) => ({ ...prev, transcriptionMode: 'basic' }));
+                      setModeTouched(true);
+                    }}
+                    className="mt-1"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-900">Basic transcription</span>
+                    <span className="block text-gray-500">
+                      Fast, free-form text. Best for a quick recap.
+                    </span>
+                  </span>
+                </label>
+
+                {(() => {
+                  const canSpeakerLabel = (voiceInfo?.count ?? 0) > 0;
+                  return (
+                    <label
+                      className={`flex items-start space-x-3 p-3 border border-gray-200 rounded-lg ${
+                        canSpeakerLabel ? 'cursor-pointer hover:bg-gray-50' : 'opacity-60 cursor-not-allowed'
+                      }`}
+                      title={
+                        canSpeakerLabel
+                          ? undefined
+                          : 'Enroll at least one voice in the campaign to enable speaker-labeled transcription.'
+                      }
+                    >
+                      <input
+                        type="radio"
+                        name="transcriptionMode"
+                        value="speaker_labeled"
+                        disabled={!canSpeakerLabel}
+                        checked={formState.transcriptionMode === 'speaker_labeled'}
+                        onChange={() => {
+                          setFormState((prev) => ({ ...prev, transcriptionMode: 'speaker_labeled' }));
+                          setModeTouched(true);
+                        }}
+                        className="mt-1"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium text-gray-900">
+                          Speaker-labeled transcription
+                        </span>
+                        <span className="block text-gray-500">
+                          Who said what, using enrolled voices.
+                          {canSpeakerLabel
+                            ? ` (${voiceInfo?.count} enrolled)`
+                            : ' Enroll a voice in the campaign to enable this.'}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })()}
+              </fieldset>
             </div>
           </div>
         </div>
