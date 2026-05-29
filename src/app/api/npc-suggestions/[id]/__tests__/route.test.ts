@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/services/database', () => ({ db: {} }));
+vi.mock('@/services/database', () => ({
+  db: {},
+  ClusterAlreadyTaggedError: class ClusterAlreadyTaggedError extends Error {},
+}));
 vi.mock('@/lib/permissions', () => ({ requireCampaignAccess: vi.fn() }));
 
 import { db } from '@/services/database';
@@ -29,7 +32,7 @@ beforeEach(() => {
   Object.assign(db as unknown as Record<string, unknown>, {
     getNpcSuggestionById: vi.fn(async () => suggestion),
     getMemberId: vi.fn(async () => 'mem_1'),
-    resolveNpcSuggestion: vi.fn(async () => {}),
+    resolveNpcSuggestion: vi.fn(async () => true),
     tagClusterWithNewName: vi.fn(async () => ({ affectedSessionIds: ['sess_1'] })),
   });
   vi.mocked(requireCampaignAccess).mockResolvedValue({
@@ -66,6 +69,12 @@ describe('POST /api/npc-suggestions/[id]', () => {
     expect(res.status).toBe(200);
     expect(db.resolveNpcSuggestion).toHaveBeenCalledWith('sg_1', 'rejected', 'user_1');
     expect(db.tagClusterWithNewName).not.toHaveBeenCalled();
+  });
+
+  it('409s when a reject loses the resolve race', async () => {
+    (db.resolveNpcSuggestion as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const { req, ctx } = request('sg_1', { action: 'reject' });
+    expect((await POST(req, ctx)).status).toBe(409);
   });
 
   it('accepts with the suggested name when none provided', async () => {

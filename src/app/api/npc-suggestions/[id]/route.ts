@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { requireCampaignAccess } from '@/lib/permissions';
-import { db } from '@/services/database';
+import { db, ClusterAlreadyTaggedError } from '@/services/database';
 import { logger } from '@/lib/logger';
 
 const resolveSchema = z.object({
@@ -46,7 +46,8 @@ export async function POST(
     }
 
     if (parsed.data.action === 'reject') {
-      await db.resolveNpcSuggestion(id, 'rejected', access.userId);
+      const ok = await db.resolveNpcSuggestion(id, 'rejected', access.userId);
+      if (!ok) return NextResponse.json({ error: 'Suggestion already resolved' }, { status: 409 });
       return NextResponse.json({ ok: true, status: 'rejected' });
     }
 
@@ -64,6 +65,9 @@ export async function POST(
     await db.resolveNpcSuggestion(id, 'accepted', access.userId);
     return NextResponse.json({ ok: true, status: 'accepted', ...result });
   } catch (error) {
+    if (error instanceof ClusterAlreadyTaggedError) {
+      return NextResponse.json({ error: 'Speaker already tagged' }, { status: 409 });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return NextResponse.json({ error: 'A voice with that name already exists' }, { status: 409 });
     }

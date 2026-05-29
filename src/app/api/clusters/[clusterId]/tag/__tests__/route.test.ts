@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-vi.mock('@/services/database', () => ({ db: {} }));
+vi.mock('@/services/database', () => ({
+  db: {},
+  ClusterAlreadyTaggedError: class ClusterAlreadyTaggedError extends Error {},
+}));
 vi.mock('@/lib/permissions', () => ({ requireCampaignAccess: vi.fn() }));
 
-import { db } from '@/services/database';
+import { db, ClusterAlreadyTaggedError } from '@/services/database';
 import { requireCampaignAccess } from '@/lib/permissions';
 import { POST } from '../route';
 
@@ -92,6 +95,15 @@ describe('POST /api/clusters/[clusterId]/tag', () => {
   it('maps a unique-constraint violation to 409', async () => {
     (db.tagClusterWithNewName as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' }),
+    );
+    const { req, ctx } = request('cl_1', { name: 'Bartender' });
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(409);
+  });
+
+  it('maps a lost tag race (already tagged) to 409', async () => {
+    (db.tagClusterWithNewName as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new ClusterAlreadyTaggedError('cl_1'),
     );
     const { req, ctx } = request('cl_1', { name: 'Bartender' });
     const res = await POST(req, ctx);

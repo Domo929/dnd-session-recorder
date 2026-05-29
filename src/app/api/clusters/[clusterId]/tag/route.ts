@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { requireCampaignAccess } from '@/lib/permissions';
-import { db } from '@/services/database';
+import { db, ClusterAlreadyTaggedError } from '@/services/database';
 import { logger } from '@/lib/logger';
 
 const tagSchema = z
@@ -62,6 +62,9 @@ export async function POST(
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    if (error instanceof ClusterAlreadyTaggedError) {
+      return NextResponse.json({ error: 'Speaker already tagged' }, { status: 409 });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return NextResponse.json({ error: 'A voice with that name already exists' }, { status: 409 });
     }

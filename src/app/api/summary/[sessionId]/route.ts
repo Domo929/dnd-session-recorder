@@ -44,13 +44,16 @@ function formatTranscriptionsForSummary(transcriptions: Array<{ text: string }>)
 async function runNpcInference(
   sessionId: string,
   enabled: boolean,
-  status: string,
   ctx: SpeakerContext,
 ): Promise<void> {
-  if (!enabled || status === 'completed' || ctx.unknownLabels.length === 0) return;
+  if (!enabled || ctx.unknownLabels.length === 0) return;
+
+  // Atomically claim the run (none|failed → pending). A lost race (already
+  // pending/completed) returns false, so inference never double-runs.
+  const claimed = await db.claimNpcInference(sessionId);
+  if (!claimed) return;
 
   try {
-    await db.setNpcInferenceStatus(sessionId, 'pending');
     const prompt = buildNpcInferencePrompt({ unknownLabels: ctx.unknownLabels, turns: ctx.turns });
     const { text } = await generateAiText(prompt, 'npc-inference');
     const suggestions = parseNpcSuggestions(text, ctx.unknownLabels);
@@ -222,7 +225,7 @@ export async function POST(
     // NPC inference pass: once, when there are unidentified clusters and the
     // campaign opted in. Best-effort — never fails the summary.
     if (speakerLabeled && speakerContext) {
-      await runNpcInference(sessionId, campaign.npcInferenceEnabled, session.npcInferenceStatus, speakerContext);
+      await runNpcInference(sessionId, campaign.npcInferenceEnabled, speakerContext);
     }
 
     logger.info('Summary generation completed', { sessionId });
