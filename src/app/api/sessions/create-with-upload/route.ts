@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
 import { createUploadFromBlob, UploadCompletionError } from '@/services/storage/createUploadFromBlob';
+import { resolveTranscriptionMode } from '@/lib/transcriptionMode';
 import { logger, getUserContext } from '@/lib/logger';
 
 interface CreateWithUploadRequest {
@@ -12,6 +13,7 @@ interface CreateWithUploadRequest {
   originalName?: string;
   mimetype?: string;
   size?: number;
+  transcription_mode?: string;
 }
 
 /**
@@ -50,6 +52,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
+    // Resolve the per-session transcription mode, failing closed to basic when
+    // speaker-labeled is asked for but the campaign has no enrolled voices.
+    const voiceSampleCount = await db.countVoiceSamplesByCampaign(campaignId);
+    const { mode: transcriptionMode } = resolveTranscriptionMode({
+      requested: body.transcription_mode,
+      campaignDefault: campaign.defaultTranscriptionMode,
+      voiceSampleCount,
+    });
+
     let uploadId: string | undefined;
     let duration: number | undefined;
 
@@ -77,6 +88,7 @@ export async function POST(request: NextRequest) {
       uploadId,
       duration,
       status: uploadId ? 'uploaded' : 'draft',
+      transcriptionMode,
     });
 
     createdSessionId = session.id;
