@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage } from '@prisma/client';
+import { Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource } from '@prisma/client';
 
 export interface CreateCampaignData {
   name: string;
@@ -43,6 +43,26 @@ export interface SessionListItem extends GamingSession {
     transcriptions: number;
   };
   summary: { id: number } | null;
+}
+
+export interface CreateVoiceSampleData {
+  memberId: string;
+  label: string;
+  audioPath: string;
+  embedding: Buffer;
+  embeddingModel: string;
+  durationMs: number;
+  source?: VoiceSampleSource;
+}
+
+/** Voice-library row without the binary embedding (safe to serialize to clients). */
+export interface VoiceSampleListItem {
+  id: string;
+  label: string;
+  durationMs: number;
+  source: VoiceSampleSource;
+  exemplarCount: number;
+  createdAt: Date;
 }
 
 export class DatabaseService {
@@ -570,6 +590,61 @@ export class DatabaseService {
       completedSessions,
       totalCampaigns,
     };
+  }
+
+  // Voice-library (speaker-labels) operations
+
+  /** The caller's Member id within a campaign, or null if they aren't a member. */
+  async getMemberId(campaignId: string, userId: string): Promise<string | null> {
+    const member = await prisma.member.findUnique({
+      where: { campaignId_userId: { campaignId, userId } },
+      select: { id: true },
+    });
+    return member?.id ?? null;
+  }
+
+  async createVoiceSample(data: CreateVoiceSampleData): Promise<VoiceSample> {
+    return prisma.voiceSample.create({
+      data: {
+        memberId: data.memberId,
+        label: data.label,
+        audioPath: data.audioPath,
+        embedding: new Uint8Array(data.embedding),
+        embeddingModel: data.embeddingModel,
+        durationMs: data.durationMs,
+        source: data.source ?? 'enrolled',
+      },
+    });
+  }
+
+  /** A member's voice samples, newest first, without the binary embedding. */
+  async listVoiceSamplesByMember(memberId: string): Promise<VoiceSampleListItem[]> {
+    return prisma.voiceSample.findMany({
+      where: { memberId },
+      select: {
+        id: true,
+        label: true,
+        durationMs: true,
+        source: true,
+        exemplarCount: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Full row including the owning member's userId, for ownership checks. */
+  async getVoiceSampleWithOwner(
+    id: string,
+  ): Promise<(VoiceSample & { member: { userId: string; campaignId: string } }) | null> {
+    return prisma.voiceSample.findUnique({
+      where: { id },
+      include: { member: { select: { userId: true, campaignId: true } } },
+    });
+  }
+
+  async deleteVoiceSample(id: string): Promise<void> {
+    await prisma.voiceSample.delete({ where: { id } });
   }
 
   // User operations (for test cleanup)

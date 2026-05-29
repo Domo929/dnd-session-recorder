@@ -50,6 +50,35 @@ export abstract class BlobStorageServiceBase implements StorageService {
 
   abstract issueUploadUrl(opts: IssueUploadOptions): Promise<IssuedUpload>;
 
+  /**
+   * Mint a single-blob, create+write SAS query string for `blobPath`. Backends
+   * differ only in the credential and allowed protocol.
+   */
+  protected abstract mintUploadSas(
+    blobPath: string,
+    startsOn: Date,
+    expiresOn: Date,
+  ): Promise<string>;
+
+  /** Whether the container must be created on demand before issuing a URL. */
+  protected get ensureContainerBeforeUpload(): boolean {
+    return false;
+  }
+
+  /** Shared upload-URL assembly used by both the auto-path and explicit-path flows. */
+  protected async composeUpload(blobPath: string): Promise<IssuedUpload> {
+    if (this.ensureContainerBeforeUpload) await this.ensureContainer();
+    const startsOn = new Date(Date.now() - 5 * 60 * 1000); // 5 min skew tolerance
+    const expiresAt = new Date(Date.now() + UPLOAD_URL_TTL_MS);
+    const sas = await this.mintUploadSas(blobPath, startsOn, expiresAt);
+    const uploadUrl = `${this.container().getBlockBlobClient(blobPath).url}?${sas}`;
+    return { uploadUrl, blobPath, expiresAt };
+  }
+
+  issueUploadUrlForPath(blobPath: string): Promise<IssuedUpload> {
+    return this.composeUpload(blobPath);
+  }
+
   /** Builds the namespaced blob path + a fresh `{timestamp}-{uuid}` filename. */
   protected newBlobPath(userId: string, originalName: string): string {
     const ext = path.extname(originalName);
@@ -108,25 +137,22 @@ export class AzureBlobStorageService extends BlobStorageServiceBase {
   }
 
   async issueUploadUrl(opts: IssueUploadOptions): Promise<IssuedUpload> {
-    const blobPath = this.newBlobPath(opts.userId, opts.originalName);
-    const startsOn = new Date(Date.now() - 5 * 60 * 1000); // 5 min skew tolerance
-    const expiresAt = new Date(Date.now() + UPLOAD_URL_TTL_MS);
+    return this.composeUpload(this.newBlobPath(opts.userId, opts.originalName));
+  }
 
-    const userDelegationKey = await this.client.getUserDelegationKey(startsOn, expiresAt);
-    const sas = generateBlobSASQueryParameters(
+  protected async mintUploadSas(blobPath: string, startsOn: Date, expiresOn: Date): Promise<string> {
+    const userDelegationKey = await this.client.getUserDelegationKey(startsOn, expiresOn);
+    return generateBlobSASQueryParameters(
       {
         containerName: this.containerName,
         blobName: blobPath,
         permissions: BlobSASPermissions.from({ create: true, write: true }),
         startsOn,
-        expiresOn: expiresAt,
+        expiresOn,
         protocol: SASProtocol.Https,
       },
       userDelegationKey,
       this.accountName,
     ).toString();
-
-    const uploadUrl = `${this.container().getBlockBlobClient(blobPath).url}?${sas}`;
-    return { uploadUrl, blobPath, expiresAt };
   }
 }

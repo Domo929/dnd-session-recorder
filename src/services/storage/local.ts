@@ -34,6 +34,14 @@ export class LocalDiskStorageService implements StorageService {
     );
   }
 
+  async issueUploadUrlForPath(_blobPath: string): Promise<IssuedUpload> {
+    throw new Error(
+      'Local storage backend cannot issue browser upload URLs. Configure Azurite ' +
+        '(AZURE_STORAGE_CONNECTION_STRING) for local development or a real storage ' +
+        'account (AZURE_BLOB_ACCOUNT_NAME) for production.',
+    );
+  }
+
   async uploadFile(_blobPath: string, _localPath: string): Promise<void> {
     throw new Error(
       'Local storage backend cannot upload to blob storage. Configure a real ' +

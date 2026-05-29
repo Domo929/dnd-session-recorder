@@ -7,7 +7,6 @@ import {
 } from '@azure/storage-blob';
 import { BlobStorageServiceBase } from './azure';
 import {
-  UPLOAD_URL_TTL_MS,
   type IssueUploadOptions,
   type IssuedUpload,
   type StorageBackend,
@@ -53,24 +52,24 @@ export class AzuriteStorageService extends BlobStorageServiceBase {
   }
 
   async issueUploadUrl(opts: IssueUploadOptions): Promise<IssuedUpload> {
-    await this.ensureContainer();
-    const blobPath = this.newBlobPath(opts.userId, opts.originalName);
-    const startsOn = new Date(Date.now() - 5 * 60 * 1000);
-    const expiresAt = new Date(Date.now() + UPLOAD_URL_TTL_MS);
+    return this.composeUpload(this.newBlobPath(opts.userId, opts.originalName));
+  }
 
-    const sas = generateBlobSASQueryParameters(
+  protected get ensureContainerBeforeUpload(): boolean {
+    return true;
+  }
+
+  protected async mintUploadSas(blobPath: string, startsOn: Date, expiresOn: Date): Promise<string> {
+    return generateBlobSASQueryParameters(
       {
         containerName: this.containerName,
         blobName: blobPath,
         permissions: BlobSASPermissions.from({ create: true, write: true }),
         startsOn,
-        expiresOn: expiresAt,
+        expiresOn,
         protocol: SASProtocol.HttpsAndHttp,
       },
       this.sharedKey,
     ).toString();
-
-    const uploadUrl = `${this.container().getBlockBlobClient(blobPath).url}?${sas}`;
-    return { uploadUrl, blobPath, expiresAt };
   }
 }
