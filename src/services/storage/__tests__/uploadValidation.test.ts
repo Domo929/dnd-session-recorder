@@ -24,4 +24,9 @@ describe('isAllowedMime', () => {
     expect(isAllowedMime('application/octet-stream')).toBe(false);
     expect(isAllowedMime('')).toBe(false);
   });
+
+  it('rejects types containing control characters', () => {
+    expect(isAllowedMime('audio/webm\nContent-Type: text/html')).toBe(false);
+    expect(isAllowedMime('audio/webm\u0000')).toBe(false);
+  });
 });

@@ -14,6 +14,11 @@ export const allowedMimeTypes = [
 ];
 
 export function isAllowedMime(mimetype: string): boolean {
+  // Reject control characters (e.g. newlines) so a base-type match can't be
+  // smuggled past via header-injection-style input.
+  if (/[\u0000-\u001f\u007f]/.test(mimetype)) {
+    return false;
+  }
   // MediaRecorder (and some browsers) tag the type with parameters, e.g.
   // "audio/webm;codecs=opus" or "audio/mp4; codecs=mp4a.40.2". Match on the base
   // type only, normalizing case/whitespace, so codec-qualified types are accepted.
