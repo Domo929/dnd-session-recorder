@@ -81,8 +81,12 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p uploads /app/data /app/data/uploads
 RUN chown -R nextjs:nodejs uploads /app/data
 
-# Switch to non-root user
-USER nextjs
+# NOTE: Do NOT switch to a non-root user here. On Azure App Service the
+# container must run as root, otherwise the persistent /home and /var/*
+# volume mounts fail with permission errors. The addgroup/adduser/chown
+# above are retained for parity with other hosts but we stay as root.
+# (Hard-won fork-specific learning — see deploy repo runbook.)
+# USER nextjs
 
 # Expose port
 EXPOSE 3000

@@ -85,4 +85,19 @@ Thumbs.db
 
 # Claude AI assistant files
 .claude/
-docs/
+# Ignore docs/ by default (upstream convention) but keep our design/plan docs.
+docs/*
+!docs/plans/
+
+# git worktrees (we create feature worktrees under .worktrees/)
+.worktrees/
+
+# Stray tsc emission inside src/ — Next.js handles bundling, so any .js / .d.ts
+# next to a .ts is a stale artifact that will shadow the real source at build
+# time (Webpack resolves .js before .ts when both exist). Keep hand-authored
+# ambient type declarations under src/types/.
+/src/**/*.js
+/src/**/*.js.map
+/src/**/*.d.ts
+/src/**/*.d.ts.map
+!/src/types/*.d.ts
