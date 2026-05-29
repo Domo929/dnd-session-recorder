@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
+import { requireCampaignAccess } from '@/lib/permissions';
 import { logger } from '@/lib/logger';
 
 const updateCampaignSchema = z.object({
@@ -15,29 +15,19 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { error: authError, user } = await requireAuth();
-    if (authError) return authError;
-
     const { id } = await params;
-    const body = await request.json();
+    const access = await requireCampaignAccess(id, 'owner');
+    if (!access.ok) return access.response;
 
-    // Check if the campaign belongs to the user
-    const campaign = await db.getCampaignById(id);
-    if (!campaign || campaign.userId !== user.id) {
-      return NextResponse.json(
-        { error: 'Campaign not found' },
-        { status: 404 }
-      );
-    }
-    
+    const body = await request.json();
     const validatedData = updateCampaignSchema.parse(body);
-    
+
     const updatedCampaign = await db.updateCampaign(id, {
       name: validatedData.name,
       description: validatedData.description,
       systemPrompt: validatedData.systemPrompt,
     });
-    
+
     return NextResponse.json(updatedCampaign);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -61,19 +51,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { error: authError, user } = await requireAuth();
-    if (authError) return authError;
-
     const { id } = await params;
-
-    // Check if the campaign belongs to the user
-    const campaign = await db.getCampaignById(id);
-    if (!campaign || campaign.userId !== user.id) {
-      return NextResponse.json(
-        { error: 'Campaign not found' },
-        { status: 404 }
-      );
-    }
+    const access = await requireCampaignAccess(id, 'owner');
+    if (!access.ok) return access.response;
 
     await db.deleteCampaign(id);
 
@@ -93,21 +73,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { error: authError, user } = await requireAuth();
-    if (authError) return authError;
-
     const { id } = await params;
+    const access = await requireCampaignAccess(id, 'any');
+    if (!access.ok) return access.response;
 
     const campaign = await db.getCampaignById(id);
-
-    if (!campaign || campaign.userId !== user.id) {
-      return NextResponse.json(
-        { error: 'Campaign not found' },
-        { status: 404 }
-      );
+    if (!campaign) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
-    return NextResponse.json(campaign);
+    return NextResponse.json({ ...campaign, viewerRole: access.role });
   } catch (error) {
     logger.error('Failed to fetch campaign', error as Error);
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth-utils';
+import { getCampaignAccess, requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { generateAiText, isAiMocked } from '@/lib/ai';
 import { isTestAccount } from '@/lib/whitelist';
@@ -63,6 +64,15 @@ export async function POST(
     // Check if session exists
     const session = await db.getSessionById(sessionId);
     if (!session) {
+      return NextResponse.json(
+        { error: 'Session not found' },
+        { status: 404 }
+      );
+    }
+
+    // Only the campaign owner may trigger (re)generation — it incurs AI spend.
+    const role = await getCampaignAccess(user.id, session.campaignId);
+    if (role !== 'owner') {
       return NextResponse.json(
         { error: 'Session not found' },
         { status: 404 }
@@ -166,9 +176,9 @@ export async function GET(
   const { sessionId } = await params;
 
   try {
-    // Check authentication
-    const { error } = await requireAuth();
-    if (error) return error;
+    // Any member of the session's campaign may read its summary.
+    const access = await requireSessionAccess(sessionId, 'any');
+    if (!access.ok) return access.response;
 
     const summary = await db.getSummary(sessionId);
 

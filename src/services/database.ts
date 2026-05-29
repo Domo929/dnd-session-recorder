@@ -46,19 +46,34 @@ export interface SessionListItem extends GamingSession {
 export class DatabaseService {
   // Campaign operations
   async createCampaign(data: CreateCampaignData): Promise<Campaign> {
-    return prisma.campaign.create({
-      data: {
-        name: data.name,
-        description: data.description,
-        systemPrompt: data.systemPrompt,
-        userId: data.userId,
-      },
+    // Create the campaign and its owner Member row together so that membership
+    // is always the single source of truth for access checks.
+    return prisma.$transaction(async (tx) => {
+      const campaign = await tx.campaign.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          systemPrompt: data.systemPrompt,
+          userId: data.userId,
+        },
+      });
+      await tx.member.create({
+        data: {
+          campaignId: campaign.id,
+          userId: data.userId,
+          role: 'owner',
+        },
+      });
+      return campaign;
     });
   }
   
   async getCampaigns(userId?: string): Promise<(Campaign & { _count: { gamingSessions: number } })[]> {
     return prisma.campaign.findMany({
-      where: userId ? { userId } : undefined,
+      // Include campaigns the user owns OR is a shared member of.
+      where: userId
+        ? { OR: [{ userId }, { members: { some: { userId } } }] }
+        : undefined,
       orderBy: { createdAt: 'desc' },
       include: {
         _count: {
@@ -109,8 +124,13 @@ export class DatabaseService {
   async getSessions(userId?: string, campaignId?: string): Promise<SessionListItem[]> {
     return prisma.gamingSession.findMany({
       where: {
-        ...(userId && { userId }),
         ...(campaignId && { campaignId }),
+        // Visible if the user owns or is a member of the session's campaign.
+        ...(userId && {
+          campaign: {
+            OR: [{ userId }, { members: { some: { userId } } }],
+          },
+        }),
       },
       include: {
         campaign: {
