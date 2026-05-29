@@ -1,0 +1,128 @@
+name: CI & Azure Deploy
+
+# Fork-only pipeline for Domo929/dnd-session-recorder.
+#
+# This fork deploys to Azure App Service, NOT Fly.io. The inherited upstream
+# workflows (production.yml / staging.yml / fly-review.yml / pull-request.yml /
+# post-merge.yml) are kept on-disk for upstream-PR parity but disabled
+# (workflow_dispatch-only) — do not re-enable them here.
+#
+# Flow:
+#   - pull_request -> main : run the CI gate only (lint/typecheck/test/build).
+#   - push -> main         : CI gate -> build & push image to GHCR (tagged with
+#                            the commit SHA) -> repository_dispatch the private
+#                            deploy repo, which points App Service at that SHA
+#                            and polls the healthcheck.
+#   - workflow_dispatch    : manual rebuild + redeploy of the current main.
+#
+# The actual Azure swap + health poll + rollback lives in
+# Domo929/dnd-recorder-deploy (keeps app code and infra separate).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: domo929/dnd-session-recorder
+  NODE_VERSION: '22'
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI gate (lint / typecheck / test / build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXTAUTH_SECRET: fallback-secret-for-ci-builds-32chars
+          NEXTAUTH_URL: http://localhost:3000
+          # Build never connects to a DB; a parseable URL is enough for Prisma.
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+  build-push:
+    name: Build & push image to GHCR
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (tagged with commit SHA + latest)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Dispatch Azure deploy
+    runs-on: ubuntu-latest
+    needs: build-push
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Trigger deploy in dnd-recorder-deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          repository: Domo929/dnd-recorder-deploy
+          event-type: image-built
+          client-payload: '{"sha": "${{ github.sha }}"}'
+
+      - name: Summary
+        run: |
+          echo "Dispatched image-built to Domo929/dnd-recorder-deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "The deploy repo points App Service at this SHA and polls the healthcheck." >> "$GITHUB_STEP_SUMMARY"
