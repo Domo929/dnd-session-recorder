@@ -13,6 +13,12 @@ import {
 const TARGET_SAMPLE_RATE = 16_000;
 
 /**
+ * Module specifier for the optional native runtime, held in a variable so that
+ * neither TypeScript nor the bundler attempts to resolve it at build time.
+ */
+const ONNX_MODULE = 'onnxruntime-node';
+
+/**
  * Decode an encoded audio clip to mono 16 kHz 32-bit float PCM samples using
  * ffmpeg, returning the raw samples as a Float32Array.
  */
@@ -65,32 +71,45 @@ export class OnnxVoiceEmbeddingService implements VoiceEmbeddingService {
   private async getSession(): Promise<any> {
     if (this.sessionPromise) return this.sessionPromise;
     this.sessionPromise = (async () => {
-      if (!fs.existsSync(this.modelPath)) {
-        throw new Error(
-          `VOICE_EMBEDDING_MODEL_PATH points at a missing file: ${this.modelPath}. ` +
-            'Bundle the ECAPA-TDNN ONNX model or set MOCK_AI_SERVICES=true to use the mock backend.',
-        );
-      }
-      let ort: typeof import('onnxruntime-node');
       try {
-        ort = await import('onnxruntime-node');
+        if (!fs.existsSync(this.modelPath)) {
+          throw new Error(
+            `VOICE_EMBEDDING_MODEL_PATH points at a missing file: ${this.modelPath}. ` +
+              'Bundle the ECAPA-TDNN ONNX model or set MOCK_AI_SERVICES=true to use the mock backend.',
+          );
+        }
+        // Typed as `any` and imported via an indirected specifier so neither
+        // tsc nor the webpack/next build resolves the optional, glibc-only
+        // onnxruntime-node at build time — it may be entirely absent on
+        // musl/alpine images, and the build must still succeed there.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let ort: any;
+        try {
+          ort = await import(/* webpackIgnore: true */ ONNX_MODULE);
+        } catch (err) {
+          throw new Error(
+            'The real voice-embedding backend requires the optional "onnxruntime-node" package ' +
+              '(glibc-only; not installable on musl/alpine). Install it on a supported host or set ' +
+              'MOCK_AI_SERVICES=true. ' +
+              `Original import error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        logger.info(`[voiceEmbedding] loading ONNX model: ${this.modelPath}`);
+        return await ort.InferenceSession.create(this.modelPath);
       } catch (err) {
-        throw new Error(
-          'The real voice-embedding backend requires the optional "onnxruntime-node" package ' +
-            '(glibc-only; not installable on musl/alpine). Install it on a supported host or set ' +
-            'MOCK_AI_SERVICES=true. ' +
-            `Original import error: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // Don't cache a rejected promise — a later call (e.g. after the model
+        // file is added) should be able to retry.
+        this.sessionPromise = null;
+        throw err;
       }
-      logger.info(`[voiceEmbedding] loading ONNX model: ${this.modelPath}`);
-      return ort.InferenceSession.create(this.modelPath);
     })();
     return this.sessionPromise;
   }
 
   async embedClip(audio: Buffer): Promise<Float32Array> {
     const session = await this.getSession();
-    const ort = await import('onnxruntime-node');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ort: any = await import(/* webpackIgnore: true */ ONNX_MODULE);
     const samples = await decodeToPcm(audio);
     if (samples.length === 0) {
       throw new Error('Decoded audio produced no samples; clip may be empty or corrupt');
