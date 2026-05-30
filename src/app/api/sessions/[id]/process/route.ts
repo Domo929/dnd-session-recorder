@@ -1,9 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth-utils';
+import { requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { maybeEnqueueDiarization } from '@/services/diarization';
 import { logger } from '@/lib/logger';
 import { withHttpMetrics } from '@/lib/metrics';
+
+/**
+ * Fire-and-forget trigger for a downstream pipeline step. The child request can
+ * run for up to an hour (full transcription/summary) while the frontend polls
+ * progress, so we deliberately do NOT await it in the request path. We do,
+ * however, attach handlers so that:
+ *  - a network/abort failure is logged (but ignored when it's the expected
+ *    long-poll timeout), and
+ *  - a non-OK HTTP response (e.g. the child rejected the request outright and
+ *    therefore never marked the session itself) transitions the session to
+ *    `error` instead of leaving it stuck in `transcribing`/`summarizing`.
+ */
+function triggerPipelineStep(
+  url: string,
+  cookieHeader: string | null,
+  sessionId: string,
+  step: 'transcription' | 'summary',
+): void {
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader && { Cookie: cookieHeader }),
+    },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(60 * 60 * 1000), // 1 hour timeout
+  })
+    .then(async (res) => {
+      if (res.ok) return;
+      let detail = '';
+      try {
+        detail = (await res.text()).slice(0, 500);
+      } catch {
+        // ignore body read errors
+      }
+      logger.error('Pipeline step returned a non-OK response', undefined, {
+        sessionId,
+        step,
+        status: res.status,
+        detail,
+      });
+      await db
+        .updateSession(sessionId, {
+          status: 'error',
+          errorStep: step,
+          errorMessage: `${step} request failed with status ${res.status}`,
+        })
+        .catch((updateErr) => {
+          logger.error('Failed to mark session errored after non-OK step', updateErr as Error, {
+            sessionId,
+            step,
+          });
+        });
+    })
+    .catch((err) => {
+      // Ignore the expected long-poll timeout - the step runs in the background.
+      if (err.name !== 'TimeoutError' && err.code !== 'UND_ERR_HEADERS_TIMEOUT') {
+        logger.error(`Failed to trigger ${step}`, err, { sessionId });
+      }
+    });
+}
 
 /**
  * POST /api/sessions/[id]/process
@@ -23,19 +84,12 @@ async function postHandler(
   const { id: sessionId } = await params;
 
   try {
-    const { error: authError, user } = await requireAuth();
-    if (authError) return authError;
-
+    // Only the campaign owner may run the processing pipeline.
+    const access = await requireSessionAccess(sessionId, 'owner');
+    if (!access.ok) return access.response;
 
     const session = await db.getSessionById(sessionId);
     if (!session) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
-    }
-
-    if (session.userId !== user.id) {
       return NextResponse.json(
         { error: 'Session not found' },
         { status: 404 }
@@ -99,20 +153,12 @@ async function postHandler(
 
       const cookieHeader = request.headers.get('cookie');
       const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin;
-      fetch(`${baseUrl}/api/transcription/${sessionId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(cookieHeader && { 'Cookie': cookieHeader }),
-        },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(60 * 60 * 1000), // 1 hour timeout
-      }).catch(err => {
-        // Ignore timeout errors - transcription runs in background
-        if (err.name !== 'TimeoutError' && err.code !== 'UND_ERR_HEADERS_TIMEOUT') {
-          logger.error('Failed to trigger transcription', err, { sessionId });
-        }
-      });
+      triggerPipelineStep(
+        `${baseUrl}/api/transcription/${sessionId}`,
+        cookieHeader,
+        sessionId,
+        'transcription',
+      );
 
       return NextResponse.json({
         message: 'Transcription started',
@@ -145,20 +191,12 @@ async function postHandler(
       // Use NEXTAUTH_URL to avoid Fly.io's 0.0.0.0:3000 issue with request.nextUrl.origin
       const cookieHeader = request.headers.get('cookie');
       const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin;
-      fetch(`${baseUrl}/api/summary/${sessionId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(cookieHeader && { 'Cookie': cookieHeader }),
-        },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(60 * 60 * 1000), // 1 hour timeout
-      }).catch(err => {
-        // Ignore timeout errors - summary generation runs in background
-        if (err.name !== 'TimeoutError' && err.code !== 'UND_ERR_HEADERS_TIMEOUT') {
-          logger.error('Failed to trigger summary generation', err, { sessionId });
-        }
-      });
+      triggerPipelineStep(
+        `${baseUrl}/api/summary/${sessionId}`,
+        cookieHeader,
+        sessionId,
+        'summary',
+      );
 
       return NextResponse.json({
         message: 'Summary generation started',

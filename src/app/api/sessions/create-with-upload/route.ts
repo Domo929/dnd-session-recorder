@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
+import { getCampaignAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { createUploadFromBlob, UploadCompletionError } from '@/services/storage/createUploadFromBlob';
 import { resolveTranscriptionMode } from '@/lib/transcriptionMode';
@@ -46,9 +47,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify campaign exists and belongs to user
+    // Verify campaign exists and the caller is its owner. Membership is the
+    // single source of truth for access (the owner has an 'owner' Member row).
     const campaign = await db.getCampaignById(campaignId);
-    if (!campaign || campaign.userId !== user.id) {
+    const role = await getCampaignAccess(user.id, campaignId);
+    if (!campaign || role !== 'owner') {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
