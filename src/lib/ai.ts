@@ -8,6 +8,10 @@ import {
   experimental_transcribe as transcribe,
   type LanguageModel,
 } from 'ai';
+import {
+  buildVocabularyPromptSection,
+  buildVocabularyPhraseHint,
+} from '@/lib/transcriptionVocabulary';
 
 /**
  * Centralized, provider-agnostic access to the AI services
@@ -100,7 +104,15 @@ export function maxTranscriptionChunkSizeMB(): number {
  * `audio` is the raw bytes of one chunk; the caller is responsible for
  * splitting large files (see `maxTranscriptionChunkSizeMB`).
  */
-export async function transcribeAudio(audio: Buffer): Promise<{ text: string }> {
+export interface TranscriptionContext {
+  /** Campaign vocabulary ("NPC / term dictionary") raw text, used to bias spelling. */
+  vocabulary?: string | null;
+}
+
+export async function transcribeAudio(
+  audio: Buffer,
+  context?: TranscriptionContext,
+): Promise<{ text: string }> {
   if (isAiMocked()) {
     return { text: MOCK_TRANSCRIPT };
   }
@@ -108,20 +120,28 @@ export async function transcribeAudio(audio: Buffer): Promise<{ text: string }> 
   const provider = transcriptionProvider();
   switch (provider) {
     case 'google':
-      return transcribeWithGoogle(audio);
+      return transcribeWithGoogle(audio, context);
     case 'whisper-local':
-      return transcribeWithWhisperLocal(audio);
+      return transcribeWithWhisperLocal(audio, context);
     case 'openai':
     default:
-      return transcribeWithOpenAI(audio);
+      return transcribeWithOpenAI(audio, context);
   }
 }
 
-async function transcribeWithOpenAI(audio: Buffer): Promise<{ text: string }> {
+async function transcribeWithOpenAI(
+  audio: Buffer,
+  context?: TranscriptionContext,
+): Promise<{ text: string }> {
   const modelId = process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1';
+  // Whisper accepts a free-text `prompt` that biases spelling of unusual words.
+  const phraseHint = buildVocabularyPhraseHint(context?.vocabulary);
   const result = await transcribe({
     model: openai.transcription(modelId),
     audio,
+    ...(phraseHint
+      ? { providerOptions: { openai: { prompt: phraseHint } } }
+      : {}),
   });
   return { text: result.text };
 }
@@ -139,15 +159,20 @@ const GEMINI_TRANSCRIPTION_PROMPT =
  * sniffed from the buffer's magic bytes (the caller no longer carries the
  * original file extension).
  */
-async function transcribeWithGoogle(audio: Buffer): Promise<{ text: string }> {
+async function transcribeWithGoogle(
+  audio: Buffer,
+  context?: TranscriptionContext,
+): Promise<{ text: string }> {
   const modelId = process.env.GOOGLE_TRANSCRIPTION_MODEL || 'gemini-2.5-flash';
+  const prompt =
+    GEMINI_TRANSCRIPTION_PROMPT + buildVocabularyPromptSection(context?.vocabulary);
   const { text } = await generateText({
     model: google(modelId),
     messages: [
       {
         role: 'user',
         content: [
-          { type: 'text', text: GEMINI_TRANSCRIPTION_PROMPT },
+          { type: 'text', text: prompt },
           { type: 'file', data: audio, mediaType: sniffAudioMime(audio) },
         ],
       },
@@ -164,7 +189,12 @@ async function transcribeWithGoogle(audio: Buffer): Promise<{ text: string }> {
  * of the call. The package is imported lazily so the rest of the app doesn't
  * fail at import time when this optional dependency isn't installed/built.
  */
-async function transcribeWithWhisperLocal(audio: Buffer): Promise<{ text: string }> {
+async function transcribeWithWhisperLocal(
+  audio: Buffer,
+  // Vocabulary biasing is not wired for whisper-local: nodejs-whisper does not
+  // expose an initial-prompt option. The param exists for a uniform signature.
+  _context?: TranscriptionContext,
+): Promise<{ text: string }> {
   const modelName = process.env.WHISPER_MODEL || 'base.en';
   const modelRootPath = process.env.WHISPER_MODELS_DIR
     ? path.resolve(process.env.WHISPER_MODELS_DIR)

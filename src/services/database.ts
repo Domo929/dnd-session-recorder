@@ -8,6 +8,7 @@ export interface CreateCampaignData {
   name: string;
   description?: string;
   systemPrompt?: string;
+  transcriptionVocabulary?: string;
   userId: string;
 }
 
@@ -113,6 +114,7 @@ export class DatabaseService {
           name: data.name,
           description: data.description,
           systemPrompt: data.systemPrompt,
+          transcriptionVocabulary: data.transcriptionVocabulary,
           userId: data.userId,
         },
       });
@@ -155,6 +157,7 @@ export class DatabaseService {
         name: data.name,
         description: data.description,
         systemPrompt: data.systemPrompt,
+        transcriptionVocabulary: data.transcriptionVocabulary,
       },
     });
   }

@@ -149,6 +149,13 @@ export async function POST(
 
     logger.info('Starting transcription', { sessionId });
 
+    // Load the campaign vocabulary ("NPC / term dictionary") once so every
+    // chunk is transcribed with the same spelling bias.
+    const campaign = await db.getCampaignById(session.campaignId);
+    const transcriptionContext = {
+      vocabulary: campaign?.transcriptionVocabulary ?? null,
+    };
+
     // Start processing timer
     await db.startProcessing(sessionId);
     await updateSessionStatus(sessionId, 'transcribing');
@@ -197,7 +204,7 @@ export async function POST(
           const fileBuffer = fs.readFileSync(chunkPath);
 
           const transcription = await withTimeout(
-            transcribeAudio(fileBuffer),
+            transcribeAudio(fileBuffer, transcriptionContext),
             CHUNK_TIMEOUT_MS,
             `Transcription timeout: Chunk ${i + 1}/${chunkPaths.length} took longer than 30 minutes`
           );

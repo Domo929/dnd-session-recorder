@@ -8,6 +8,7 @@ const updateCampaignSchema = z.object({
   name: z.string().min(1, 'Campaign name is required'),
   description: z.string().optional(),
   systemPrompt: z.string().optional(),
+  transcriptionVocabulary: z.string().optional(),
 });
 
 export async function PUT(
@@ -26,6 +27,7 @@ export async function PUT(
       name: validatedData.name,
       description: validatedData.description,
       systemPrompt: validatedData.systemPrompt,
+      transcriptionVocabulary: validatedData.transcriptionVocabulary,
     });
 
     return NextResponse.json(updatedCampaign);

@@ -15,6 +15,7 @@ interface Campaign {
   name: string;
   description: string | null;
   systemPrompt: string | null;
+  transcriptionVocabulary: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +39,7 @@ export default function CampaignsPage() {
       name: '',
       description: '',
       systemPrompt: '',
+      transcriptionVocabulary: '',
     },
   });
 
@@ -47,9 +49,10 @@ export default function CampaignsPage() {
         name: editingCampaign.name,
         description: editingCampaign.description || '',
         systemPrompt: editingCampaign.systemPrompt || '',
+        transcriptionVocabulary: editingCampaign.transcriptionVocabulary || '',
       });
     } else if (modalOpen) {
-      reset({ name: '', description: '', systemPrompt: '' });
+      reset({ name: '', description: '', systemPrompt: '', transcriptionVocabulary: '' });
     }
   }, [modalOpen, editingCampaign, reset]);
 
@@ -264,6 +267,16 @@ export default function CampaignsPage() {
                 rows={4}
                 placeholder="Characters, setting, recurring NPCs — helps the AI ground summaries"
                 helperText="This context helps the AI generate more accurate summaries."
+              />
+
+              <Textarea
+                {...register('transcriptionVocabulary')}
+                id="campaign-transcriptionVocabulary"
+                label="Transcription Dictionary (Optional)"
+                error={errors.transcriptionVocabulary?.message}
+                rows={4}
+                placeholder={'Jabarquious\nMournhold\nLord Vexil'}
+                helperText="NPC names, places, and special terms — one per line (or comma-separated). The transcriber uses these spellings instead of guessing."
               />
 
               <div className="flex gap-2.5 pt-1">
