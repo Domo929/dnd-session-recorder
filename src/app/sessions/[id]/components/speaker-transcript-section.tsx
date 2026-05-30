@@ -16,6 +16,7 @@ interface Props {
   sessionId: string;
   transcriptions: Transcription[];
   sessionStatus: string;
+  campaignId: string;
 }
 
 function formatTime(seconds: number): string {
@@ -24,12 +25,20 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function SpeakerTranscriptSection({ sessionId, transcriptions, sessionStatus }: Props) {
+export function SpeakerTranscriptSection({ sessionId, transcriptions, sessionStatus, campaignId }: Props) {
   const { data } = useSpeakerData(sessionId);
 
-  // Fall back to the plain transcript until a speaker-labeled run completes.
+  // Fall back to the basic-mode transcript (with relabeling) until a
+  // speaker-labeled run completes.
   if (!hasSpeakerView(data)) {
-    return <TranscriptSection transcriptions={transcriptions} sessionStatus={sessionStatus} />;
+    return (
+      <TranscriptSection
+        transcriptions={transcriptions}
+        sessionStatus={sessionStatus}
+        sessionId={sessionId}
+        campaignId={campaignId}
+      />
+    );
   }
   return <SpeakerView sessionId={sessionId} data={data!} />;
 }

@@ -247,6 +247,7 @@ function SessionDetailPage() {
                   sessionId={sessionId}
                   transcriptions={transcriptions}
                   sessionStatus={session.status}
+                  campaignId={session.campaign.id}
                 />
               )}
 
