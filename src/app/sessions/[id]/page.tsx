@@ -14,10 +14,9 @@ import { SpeakerTranscriptSection } from './components/speaker-transcript-sectio
 import { ResummarizeBanner } from './components/resummarize-banner';
 import { DMTodoPanel } from './components/dm-todo-panel';
 import { DeleteSessionModal } from './components/delete-session-modal';
-import { ThemeSelector } from './components/theme-selector';
+import { ThemeSelector } from '@/components/theme/theme-selector';
 import { useSessionData } from './hooks/use-session-data';
 import { useSessionMutations } from './hooks/use-session-mutations';
-import { useSessionTheme } from './hooks/use-session-theme';
 import type { SessionToDelete } from './types';
 
 type TabKey = 'summary' | 'transcript' | 'todos';
@@ -58,8 +57,6 @@ function SessionDetailPage() {
     deleteSessionMutation,
   } = useSessionMutations({ sessionId });
 
-  const { theme: currentTheme, setTheme } = useSessionTheme();
-
   // Local UI state
   const [activeTab, setActiveTab] = useState<TabKey>('summary');
   const [railOpen, setRailOpen] = useState(false);
@@ -84,7 +81,7 @@ function SessionDetailPage() {
       return (
         <div
           className="flex flex-col min-h-[calc(100vh-80px)]"
-          style={{ background: 'var(--sp-bg-base)' }}
+          style={{ background: 'var(--sp-bg-canvas)' }}
         >
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
@@ -107,7 +104,7 @@ function SessionDetailPage() {
     return (
       <div
         className="flex items-center justify-center min-h-[calc(100vh-80px)]"
-        style={{ background: 'var(--sp-bg-base)' }}
+        style={{ background: 'var(--sp-bg-canvas)' }}
       >
         <Loader2
           className="w-12 h-12 animate-spin"
@@ -130,7 +127,7 @@ function SessionDetailPage() {
   return (
     <div
       className="flex flex-col min-h-[calc(100vh-80px)]"
-      style={{ background: 'var(--sp-bg-base)' }}
+      style={{ background: 'var(--sp-bg-canvas)' }}
     >
       {/* Processing Pipeline Strip */}
       <ProcessingPipeline
@@ -181,7 +178,7 @@ function SessionDetailPage() {
                 <ArrowLeft className="w-4 h-4" />
                 Sessions
               </Link>
-              <ThemeSelector currentTheme={currentTheme} onChange={setTheme} />
+              <ThemeSelector />
             </div>
 
             {/* Session header */}
@@ -291,7 +288,7 @@ export default function SessionPage() {
       fallback={
         <div
           className="flex items-center justify-center min-h-[calc(100vh-80px)]"
-          style={{ background: 'var(--sp-bg-base)' }}
+          style={{ background: 'var(--sp-bg-canvas)' }}
         >
           <Loader2
             className="w-12 h-12 animate-spin"
