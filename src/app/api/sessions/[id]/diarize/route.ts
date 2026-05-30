@@ -49,6 +49,13 @@ export async function POST(
     }
 
     const job = await db.createOnDemandDiarizationJob(sessionId);
+    if (!job) {
+      // Lost the race to a concurrent request that just enqueued a run.
+      return NextResponse.json(
+        { error: 'Diarization is already in progress for this session' },
+        { status: 409 },
+      );
+    }
     logger.info('On-demand diarization enqueued', { sessionId, jobId: job.id });
     return NextResponse.json({ ok: true, jobId: job.id });
   } catch (error) {

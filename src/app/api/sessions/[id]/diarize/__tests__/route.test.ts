@@ -70,6 +70,12 @@ describe('POST /api/sessions/[id]/diarize', () => {
     expect(db.createOnDemandDiarizationJob).not.toHaveBeenCalled();
   });
 
+  it('409s when the atomic enqueue loses a race (returns null)', async () => {
+    (db.createOnDemandDiarizationJob as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    const { req: r, ctx } = req('sess_1');
+    expect((await POST(r, ctx)).status).toBe(409);
+  });
+
   it('409s when the audio has been purged', async () => {
     (db.getSessionById as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: 'sess_1',

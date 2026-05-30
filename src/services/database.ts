@@ -761,18 +761,20 @@ export class DatabaseService {
    * and queue a job in one transaction. Unlike the post-transcription auto path
    * (`maybeEnqueueDiarization`) this does not require enrolled voices — an
    * all-unknown result is still useful (the DM can tag clusters to seed the
-   * voice library).
+   * voice library). The status flip is conditional (claim-on-update) so two
+   * racing requests can't both enqueue a (billed) job; returns null when a run
+   * is already queued/running.
    */
-  async createOnDemandDiarizationJob(sessionId: string): Promise<DiarizationJob> {
+  async createOnDemandDiarizationJob(sessionId: string): Promise<DiarizationJob | null> {
     const hmacSecret = randomBytes(32).toString('hex');
-    const [job] = await prisma.$transaction([
-      prisma.diarizationJob.create({ data: { sessionId, status: 'queued', hmacSecret } }),
-      prisma.gamingSession.update({
-        where: { id: sessionId },
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.gamingSession.updateMany({
+        where: { id: sessionId, diarizationStatus: { notIn: ['queued', 'running'] } },
         data: { transcriptionMode: 'speaker_labeled', diarizationStatus: 'queued' },
-      }),
-    ]);
-    return job;
+      });
+      if (claimed.count === 0) return null;
+      return tx.diarizationJob.create({ data: { sessionId, status: 'queued', hmacSecret } });
+    });
   }
 
   async getDiarizationJobById(
@@ -1350,16 +1352,30 @@ export class DatabaseService {
         if (claimed.count === 0) return; // lost a concurrent tag race; skip.
 
         if (shouldLearn(match, false, config)) {
-          await this.addLearnedExemplarTx(tx, {
-            voiceSampleId: match.voiceSampleId,
-            embedding: Buffer.from(cluster.embeddingCentroid),
-            embeddingModel: 'ecapa-tdnn-v1',
-            source: 'auto_matched',
-            sourceSessionId: sessionId,
-            similarityAtCapture: match.matchedScore,
-            durationMs: cluster.totalDurationMs,
-            maxExemplars: config.maxExemplars,
+          // Don't let an auto-match downgrade a DM-confirmed exemplar already
+          // captured for this voice in this session (exemplars are unique on
+          // [voiceSampleId, sourceSessionId]).
+          const existing = await tx.voiceExemplar.findUnique({
+            where: {
+              voiceSampleId_sourceSessionId: {
+                voiceSampleId: match.voiceSampleId,
+                sourceSessionId: sessionId,
+              },
+            },
+            select: { source: true },
           });
+          if (existing?.source !== 'dm_confirmed') {
+            await this.addLearnedExemplarTx(tx, {
+              voiceSampleId: match.voiceSampleId,
+              embedding: Buffer.from(cluster.embeddingCentroid),
+              embeddingModel: 'ecapa-tdnn-v1',
+              source: 'auto_matched',
+              sourceSessionId: sessionId,
+              similarityAtCapture: match.matchedScore,
+              durationMs: cluster.totalDurationMs,
+              maxExemplars: config.maxExemplars,
+            });
+          }
         }
         linked.push({
           clusterId: cluster.id,
