@@ -30,10 +30,11 @@ function mapStatusToPill(status: SessionStatus): string {
   }
 }
 
-function formatDuration(minutes: number | null): string | null {
-  if (!minutes) return null;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
+function formatDuration(seconds: number | null): string | null {
+  if (!seconds) return null;
+  const totalMinutes = Math.floor(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
   return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 }
 
