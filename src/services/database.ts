@@ -408,6 +408,42 @@ export class DatabaseService {
       where: { sessionId },
     });
   }
+
+  // Resumable transcription: per-chunk persistence + chunking signature
+  async upsertTranscriptionChunk(sessionId: string, chunkIndex: number, text: string): Promise<void> {
+    await prisma.transcriptionChunk.upsert({
+      where: { sessionId_chunkIndex: { sessionId, chunkIndex } },
+      create: { sessionId, chunkIndex, text },
+      update: { text },
+    });
+  }
+
+  async getTranscriptionChunks(sessionId: string): Promise<Map<number, string>> {
+    const rows = await prisma.transcriptionChunk.findMany({
+      where: { sessionId },
+      select: { chunkIndex: true, text: true },
+    });
+    return new Map(rows.map((r) => [r.chunkIndex, r.text]));
+  }
+
+  async clearTranscriptionChunks(sessionId: string): Promise<void> {
+    await prisma.transcriptionChunk.deleteMany({ where: { sessionId } });
+  }
+
+  async setTranscriptionChunkCount(sessionId: string, count: number | null): Promise<void> {
+    await prisma.gamingSession.update({
+      where: { id: sessionId },
+      data: { transcriptionChunkCount: count, updatedAt: new Date() },
+    });
+  }
+
+  async getTranscriptionChunkCount(sessionId: string): Promise<number | null> {
+    const session = await prisma.gamingSession.findUnique({
+      where: { id: sessionId },
+      select: { transcriptionChunkCount: true },
+    });
+    return session?.transcriptionChunkCount ?? null;
+  }
   
   // Summary operations
   async saveSummary(sessionId: string, summaryText: string): Promise<Summary> {

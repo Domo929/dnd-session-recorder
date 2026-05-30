@@ -166,6 +166,11 @@ model GamingSession {
   chunksCompleted       Int?    @default(0) @map("chunks_completed")
   currentStep           String? @map("current_step") // chunking, transcribing, stitching
 
+  // Resumable transcription: chunk count from the run that produced the saved
+  // TranscriptionChunk rows. Acts as a chunking signature — on retry we resume
+  // only when a fresh split yields the same count, else we restart cleanly.
+  transcriptionChunkCount Int? @map("transcription_chunk_count")
+
   // Timeout tracking
   processingStartedAt DateTime? @map("processing_started_at")
   lastProgressAt      DateTime? @map("last_progress_at")
@@ -192,6 +197,7 @@ model GamingSession {
   speakerClusters SessionSpeakerCluster[]
   diarizationJobs DiarizationJob[]
   npcSuggestions  SessionNpcSuggestion[]
+  transcriptionChunks TranscriptionChunk[]
 
   @@map("gaming_sessions")
 }
@@ -213,6 +219,23 @@ model Transcription {
 
   @@index([speakerClusterId])
   @@map("transcriptions")
+}
+
+/// Per-chunk transcript persisted the instant a chunk succeeds, so a retry
+/// (manual or automatic) resumes instead of re-transcribing completed chunks.
+/// Rows are cleared once the final stitched transcript is saved, on a fresh
+/// (non-resume) run, and via cascade when the session is deleted.
+model TranscriptionChunk {
+  id         Int      @id @default(autoincrement())
+  sessionId  String   @map("session_id")
+  chunkIndex Int      @map("chunk_index")
+  text       String   @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+  session    GamingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, chunkIndex])
+  @@index([sessionId])
+  @@map("transcription_chunks")
 }
 
 model Summary {

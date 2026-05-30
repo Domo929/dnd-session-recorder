@@ -3,6 +3,17 @@
 import { useState, useMemo } from 'react';
 import { FileText, Search } from 'lucide-react';
 import type { Transcription } from '../types';
+import { parseSpeakerTurns, speakerColorIndex } from '@/lib/transcriptFormat';
+
+// Accent colors for speaker labels, indexed by speakerColorIndex.
+const SPEAKER_COLORS = [
+  'var(--sp-fg-2)',
+  'var(--sp-primary)',
+  '#2f9e6b',
+  '#b5793a',
+  '#8a5cd1',
+  '#c2526b',
+];
 
 interface TranscriptSectionProps {
   transcriptions: Transcription[];
@@ -138,7 +149,7 @@ export function TranscriptSection({
         />
         <input
           type="text"
-          placeholder="Search transcript\u2026"
+          placeholder={'Search transcript\u2026'}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="font-body"
@@ -235,16 +246,38 @@ export function TranscriptSection({
                 </span>
 
                 {/* Text column */}
-                <span
+                <div
                   className="font-body"
                   style={{
                     fontSize: 14,
                     color: 'var(--sp-fg-2)',
                     lineHeight: 1.55,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                    flex: 1,
                   }}
                 >
-                  {t.text}
-                </span>
+                  {parseSpeakerTurns(t.text).map((turn, ti) => (
+                    <p key={ti} style={{ margin: 0 }}>
+                      {turn.speaker && (
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            marginRight: 6,
+                            color:
+                              SPEAKER_COLORS[
+                                speakerColorIndex(turn.speaker, SPEAKER_COLORS.length)
+                              ],
+                          }}
+                        >
+                          {turn.speaker}:
+                        </span>
+                      )}
+                      {turn.text}
+                    </p>
+                  ))}
+                </div>
               </div>
             ))
           )}

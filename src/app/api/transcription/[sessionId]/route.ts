@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
 import { splitAudioBySize, cleanupChunkFiles } from '@/services/audioProcessing';
-import { transcribeAudio, isAiMocked, maxTranscriptionChunkSizeMB } from '@/lib/ai';
+import { transcribeWithBackoff, createTranscriptionPacer, transcriptionMinIntervalMs, isAiMocked, maxTranscriptionChunkSizeMB } from '@/lib/ai';
 import { getStorageService } from '@/services/storage';
 import { withMaterializedAudio } from '@/services/storage/materialize';
 import { isTestAccount } from '@/lib/whitelist';
@@ -177,21 +177,65 @@ export async function POST(
         chunkCount: chunkPaths.length
       });
 
+      // Resumable transcription: chunks are split by size, which is
+      // deterministic for the same audio + chunk-size. transcriptionChunkCount
+      // records the chunk count of the run that produced any persisted
+      // TranscriptionChunk rows — a chunking signature. If a fresh split yields
+      // the same count we resume (reuse persisted chunks); otherwise we discard
+      // stale partial work and start fresh.
+      const persistedCount = await db.getTranscriptionChunkCount(sessionId);
+      let resumedChunks: Map<number, string>;
+      if (persistedCount === chunkPaths.length) {
+        resumedChunks = await db.getTranscriptionChunks(sessionId);
+        if (resumedChunks.size > 0) {
+          logger.info('Resuming transcription from persisted chunks', {
+            sessionId,
+            resumed: resumedChunks.size,
+            totalChunks: chunkPaths.length,
+          });
+        }
+      } else {
+        await db.clearTranscriptionChunks(sessionId);
+        await db.setTranscriptionChunkCount(sessionId, chunkPaths.length);
+        resumedChunks = new Map();
+      }
+
       // Update progress: Chunking complete, starting transcription
       await db.updateTranscriptionProgress(sessionId, {
         currentStep: 'transcribing',
         totalChunks: chunkPaths.length,
-        chunksCompleted: 0,
+        chunksCompleted: resumedChunks.size,
         transcriptionProgress: 10,
       });
 
-      const allText: string[] = [];
+      const chunkTexts: string[] = new Array(chunkPaths.length);
+
+      // Pace requests to stay under the provider's per-minute quota.
+      const pace = createTranscriptionPacer(transcriptionMinIntervalMs());
 
       // Set timeout for each chunk: 30 minutes per chunk
       const CHUNK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
       for (let i = 0; i < chunkPaths.length; i++) {
         const chunkPath = chunkPaths[i];
+
+        // Resume: already-transcribed chunk — skip the provider call entirely.
+        const existing = resumedChunks.get(i);
+        if (existing !== undefined) {
+          chunkTexts[i] = existing;
+          logger.debug('Skipping already-transcribed chunk', {
+            sessionId,
+            chunkNumber: i + 1,
+            totalChunks: chunkPaths.length,
+          });
+          const progressPercentage = Math.floor(10 + ((i + 1) / chunkPaths.length) * 80);
+          await db.updateTranscriptionProgress(sessionId, {
+            chunksCompleted: i + 1,
+            transcriptionProgress: progressPercentage,
+          });
+          continue;
+        }
+
         logger.debug('Transcribing chunk', {
           sessionId,
           chunkNumber: i + 1,
@@ -203,8 +247,11 @@ export async function POST(
           // Read the file buffer for AI SDK
           const fileBuffer = fs.readFileSync(chunkPath);
 
+          // Pace before each provider call to respect the RPM limit.
+          await pace();
+
           const transcription = await withTimeout(
-            transcribeAudio(fileBuffer, transcriptionContext),
+            transcribeWithBackoff(fileBuffer, { context: transcriptionContext }),
             CHUNK_TIMEOUT_MS,
             `Transcription timeout: Chunk ${i + 1}/${chunkPaths.length} took longer than 30 minutes`
           );
@@ -213,7 +260,9 @@ export async function POST(
             throw new Error(`No transcription text received for chunk ${i + 1}`);
           }
 
-          allText.push(transcription.text);
+          // Persist immediately so a later failure / retry resumes from here.
+          await db.upsertTranscriptionChunk(sessionId, i, transcription.text);
+          chunkTexts[i] = transcription.text;
           logger.info('Chunk transcribed successfully', {
             sessionId,
             chunkNumber: i + 1,
@@ -233,7 +282,9 @@ export async function POST(
             totalChunks: chunkPaths.length
           });
 
-          // Clean up any chunks we created
+          // Clean up the temp chunk files we created. Persisted
+          // TranscriptionChunk rows are intentionally left in place so the
+          // retry resumes instead of re-transcribing completed chunks.
           cleanupChunkFiles(chunkPaths, localPath);
 
           throw new Error(
@@ -252,13 +303,17 @@ export async function POST(
       cleanupChunkFiles(chunkPaths, localPath);
       logger.info('All chunks transcribed and cleaned up', { sessionId });
 
-      // Combine all text chunks into a single transcription
-      return { fullText: allText.join(' '), chunkPaths };
+      // Combine all text chunks (in index order) into a single transcription
+      return { fullText: chunkTexts.join(' '), chunkPaths };
     });
 
     // Save transcription to database
     await db.saveTranscription(sessionId, fullText);
     logger.info('Transcription saved', { sessionId, textLength: fullText.length });
+
+    // Final transcript persisted — drop the per-chunk resume rows + signature.
+    await db.clearTranscriptionChunks(sessionId);
+    await db.setTranscriptionChunkCount(sessionId, null);
     
     // Update progress: Complete
     await db.updateTranscriptionProgress(sessionId, {

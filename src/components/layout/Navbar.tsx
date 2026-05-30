@@ -7,6 +7,7 @@ import { useSession, signOut } from 'next-auth/react';
 import { Home, User, LogOut, Settings, Scroll, PenTool, Archive, BookOpen, HardDrive, ChevronDown } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Button from '@/components/ui/Button';
+import { ThemeSelector } from '@/components/theme/theme-selector';
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -50,7 +51,15 @@ export default function Navbar() {
               <Scroll className="h-[22px] w-[22px] text-white" />
             </div>
             <div>
-              <span className="text-2xl font-bold font-display bg-gradient-to-r from-ink-900 to-ink-950 bg-clip-text text-transparent leading-none block">
+              <span
+                className="text-2xl font-bold font-display leading-none block"
+                style={{
+                  backgroundImage: 'linear-gradient(to right, var(--sp-primary), var(--sp-primary-deep))',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                }}
+              >
                 StoryScribe
               </span>
               <div className="text-xs text-slate-500 font-body mt-0.5">Annals of heroism and folly.</div>
@@ -83,6 +92,7 @@ export default function Navbar() {
 
             {/* Auth section */}
             <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+              <ThemeSelector />
               {status === 'loading' ? (
                 <div className="w-8 h-8 bg-slate-200 rounded-full animate-pulse" />
               ) : session ? (

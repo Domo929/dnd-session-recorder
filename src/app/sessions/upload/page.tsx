@@ -133,6 +133,12 @@ function SessionUploadPageContent() {
   const { data: voiceInfo } = useQuery<VoiceSampleCount>({
     queryKey: ['voice-sample-count', formState.campaignId],
     enabled: !!formState.campaignId,
+    // Enrollment happens on the campaign page; without this the global 5-minute
+    // staleTime can leave the count stale, greying out the speaker-labeled
+    // toggle even after a voice was just enrolled.
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const response = await fetch(
         `/api/campaigns/${formState.campaignId}/voice-samples/count`,
