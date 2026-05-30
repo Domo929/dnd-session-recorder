@@ -75,8 +75,15 @@ describe('POST /api/clusters/[clusterId]/tag', () => {
     const { req, ctx } = request('cl_1', { voiceSampleId: 'vs_9' });
     const res = await POST(req, ctx);
     expect(res.status).toBe(200);
-    expect(db.tagClusterWithExistingVoice).toHaveBeenCalledWith('cl_1', 'vs_9', 'sess_1');
+    expect(db.tagClusterWithExistingVoice).toHaveBeenCalledWith('cl_1', 'vs_9', 'sess_1', true);
     expect(await res.json()).toEqual({ ok: true, affectedSessionIds: ['sess_1'] });
+  });
+
+  it('honors useForTraining=false when linking an existing voice', async () => {
+    const { req, ctx } = request('cl_1', { voiceSampleId: 'vs_9', useForTraining: false });
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(200);
+    expect(db.tagClusterWithExistingVoice).toHaveBeenCalledWith('cl_1', 'vs_9', 'sess_1', false);
   });
 
   it('names a new voice and runs the cascade', async () => {
