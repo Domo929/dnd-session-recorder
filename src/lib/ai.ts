@@ -4,8 +4,11 @@ import path from 'path';
 import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
 import {
+  embedMany,
   generateText,
+  streamText,
   experimental_transcribe as transcribe,
+  type CoreMessage,
   type LanguageModel,
 } from 'ai';
 import {
@@ -290,6 +293,53 @@ export async function generateAiText(prompt: string, kind: AiTextKind): Promise<
     prompt,
   });
   return { text: result.text };
+}
+
+const EMBEDDING_DIM = 768;
+
+function mockEmbedding(text: string): number[] {
+  // Deterministic pseudo-vector from a simple rolling hash. Mock-only.
+  const v = new Array<number>(EMBEDDING_DIM);
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h = (h ^ text.charCodeAt(i)) * 16777619;
+  }
+  for (let i = 0; i < EMBEDDING_DIM; i++) {
+    h = (h * 48271) % 2147483647;
+    v[i] = (h % 1000) / 1000;
+  }
+  return v;
+}
+
+export async function embedTexts(texts: string[]): Promise<number[][]> {
+  if (isAiMocked()) return texts.map(mockEmbedding);
+  const modelId = process.env.GOOGLE_EMBEDDING_MODEL || 'text-embedding-004';
+  const { embeddings } = await embedMany({
+    model: google.textEmbeddingModel(modelId),
+    values: texts,
+  });
+  return embeddings;
+}
+
+const CHAT_SYSTEM_PROMPT =
+  'You are a helpful assistant answering questions about a Dungeons & Dragons campaign. ' +
+  'Answer ONLY using the provided context excerpts. If the context does not contain the ' +
+  'answer, say you could not find it in the campaign records. When you use an excerpt, cite ' +
+  'it inline using its bracketed citation tag exactly as given.';
+
+export function buildChatMessages(
+  context: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): CoreMessage[] {
+  return [
+    { role: 'system', content: `${CHAT_SYSTEM_PROMPT}\n\nContext:\n${context}` },
+    ...history,
+  ];
+}
+
+export function streamCampaignChat(messages: CoreMessage[]) {
+  const modelId = process.env.GOOGLE_SUMMARY_MODEL || 'gemini-2.5-flash';
+  return streamText({ model: google(modelId), messages });
 }
 
 function summaryModel(): LanguageModel {

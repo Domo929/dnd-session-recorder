@@ -52,6 +52,24 @@ describe('ai service wrapper (mock mode)', () => {
       expect(a.text).toEqual(b.text);
     });
   });
+
+  describe('embedTexts', () => {
+    it('returns 768-dim deterministic vectors without hitting Gemini', async () => {
+      const { embedTexts } = await import('@/lib/ai');
+      const [a] = await embedTexts(['hello']);
+      const [b] = await embedTexts(['hello']);
+      const [c] = await embedTexts(['different']);
+      expect(a).toHaveLength(768);
+      expect(a).toEqual(b);
+      expect(a).not.toEqual(c);
+    });
+
+    it('returns one vector per input text', async () => {
+      const { embedTexts } = await import('@/lib/ai');
+      const out = await embedTexts(['one', 'two', 'three']);
+      expect(out).toHaveLength(3);
+    });
+  });
 });
 
 describe('transcription provider selection (maxTranscriptionChunkSizeMB)', () => {
