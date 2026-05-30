@@ -10,10 +10,12 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900;
-    background-image:
+    background-color: var(--sp-bg-canvas, #f8fafc);
+    color: var(--sp-fg-1, #0f172a);
+    background-image: var(--sp-bg-canvas-grad,
       radial-gradient(circle at 20% 80%, rgba(148, 163, 184, 0.03) 0%, transparent 50%),
-      radial-gradient(circle at 80% 20%, rgba(100, 116, 139, 0.02) 0%, transparent 50%);
+      radial-gradient(circle at 80% 20%, rgba(100, 116, 139, 0.02) 0%, transparent 50%));
+    transition: background-color 150ms ease, color 150ms ease;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -176,11 +178,19 @@
   }
 
   .btn-secondary {
-    @apply bg-slate-100 hover:bg-slate-200 text-slate-900 font-semibold py-2 px-4 rounded-ss-lg transition-all duration-150 border border-slate-400 shadow-ss-btn-light;
+    @apply font-semibold py-2 px-4 rounded-ss-lg transition-all duration-150 border shadow-ss-btn-light;
+    background-color: var(--sp-bg-sunken);
+    color: var(--sp-fg-1);
+    border-color: var(--sp-border-strong);
+  }
+  .btn-secondary:hover {
+    background-color: var(--sp-bg-active);
   }
 
   .card {
-    @apply bg-white rounded-ss-xl border border-slate-300 p-6 shadow-ss-card;
+    @apply rounded-ss-xl border p-6 shadow-ss-card;
+    background-color: var(--sp-bg-surface);
+    border-color: var(--sp-border-strong);
   }
 
   .card-hover {
@@ -188,26 +198,117 @@
   }
 
   .input-field {
-    @apply w-full px-3 py-2 border border-slate-400 rounded-ss-lg focus:outline-none focus:ring-[3px] focus:ring-ink-900/[0.18] focus:border-ink-900 bg-white text-slate-900 transition-all duration-150;
+    @apply w-full px-3 py-2 border rounded-ss-lg focus:outline-none focus:ring-[3px] focus:ring-ink-900/[0.18] transition-all duration-150;
+    background-color: var(--sp-bg-surface);
+    color: var(--sp-fg-1);
+    border-color: var(--sp-border-strong);
+  }
+  .input-field:focus {
+    border-color: var(--sp-primary);
   }
 
   .action-card {
-    @apply bg-white p-4 rounded-ss-xl border border-slate-300 shadow-ss-card hover:shadow-ss-card-hover transition-all duration-150 flex items-center space-x-3;
+    @apply p-4 rounded-ss-xl border shadow-ss-card hover:shadow-ss-card-hover transition-all duration-150 flex items-center space-x-3;
+    background-color: var(--sp-bg-surface);
+    border-color: var(--sp-border-strong);
   }
 
   .stat-overview {
-    @apply bg-white rounded-ss-xl border border-slate-300 p-4 shadow-ss-card;
+    @apply rounded-ss-xl border p-4 shadow-ss-card;
+    background-color: var(--sp-bg-surface);
+    border-color: var(--sp-border-strong);
   }
 
   .session-list {
-    @apply bg-white rounded-ss-xl border border-slate-300 overflow-hidden shadow-ss-card;
+    @apply rounded-ss-xl border overflow-hidden shadow-ss-card;
+    background-color: var(--sp-bg-surface);
+    border-color: var(--sp-border-strong);
   }
 
   .session-item {
-    @apply p-4 hover:bg-slate-50 transition-colors duration-150;
+    @apply p-4 transition-colors duration-150;
+  }
+  .session-item:hover {
+    background-color: var(--sp-bg-sunken);
   }
 
   .empty-state {
-    @apply bg-white rounded-ss-xl border border-slate-300 p-8 text-center shadow-ss-card;
+    @apply rounded-ss-xl border p-8 text-center shadow-ss-card;
+    background-color: var(--sp-bg-surface);
+    border-color: var(--sp-border-strong);
   }
 }
+
+/* ============================================================
+   App-wide theme bridge
+   ------------------------------------------------------------
+   The app was originally built with hardcoded neutral Tailwind
+   utilities (gray/slate/white/ink scales). To make every page
+   respond to the theme without rewriting hundreds of call sites,
+   we remap exactly the neutral utilities that are in use to the
+   theme tokens — but ONLY for the non-default themes. Daylight
+   keeps native Tailwind so the default production look is
+   pixel-identical (no regression). The attribute selector gives
+   these rules higher specificity than the single-class Tailwind
+   utilities, so no !important is needed.
+
+   Colored utilities (blue/green/red/amber) and intentional
+   translucent overlays (e.g. bg-slate-900/50 modal scrims,
+   bg-white/10) are deliberately left untouched.
+   ============================================================ */
+/* Surfaces */
+[data-theme="midnight"] .bg-white,
+[data-theme="tome"] .bg-white { background-color: var(--sp-bg-surface); }
+[data-theme="midnight"] .bg-gray-50, [data-theme="tome"] .bg-gray-50,
+[data-theme="midnight"] .bg-slate-50, [data-theme="tome"] .bg-slate-50,
+[data-theme="midnight"] .bg-gray-100, [data-theme="tome"] .bg-gray-100,
+[data-theme="midnight"] .bg-slate-100, [data-theme="tome"] .bg-slate-100 { background-color: var(--sp-bg-sunken); }
+[data-theme="midnight"] .bg-gray-200, [data-theme="tome"] .bg-gray-200,
+[data-theme="midnight"] .bg-slate-200, [data-theme="tome"] .bg-slate-200,
+[data-theme="midnight"] .bg-ink-50, [data-theme="tome"] .bg-ink-50 { background-color: var(--sp-bg-active); }
+
+/* Text */
+[data-theme="midnight"] .text-gray-900, [data-theme="tome"] .text-gray-900,
+[data-theme="midnight"] .text-slate-900, [data-theme="tome"] .text-slate-900,
+[data-theme="midnight"] .text-ink-900, [data-theme="tome"] .text-ink-900,
+[data-theme="midnight"] .text-black, [data-theme="tome"] .text-black { color: var(--sp-fg-1); }
+[data-theme="midnight"] .text-gray-800, [data-theme="tome"] .text-gray-800,
+[data-theme="midnight"] .text-slate-800, [data-theme="tome"] .text-slate-800,
+[data-theme="midnight"] .text-gray-700, [data-theme="tome"] .text-gray-700,
+[data-theme="midnight"] .text-slate-700, [data-theme="tome"] .text-slate-700 { color: var(--sp-fg-2); }
+[data-theme="midnight"] .text-gray-600, [data-theme="tome"] .text-gray-600,
+[data-theme="midnight"] .text-slate-600, [data-theme="tome"] .text-slate-600,
+[data-theme="midnight"] .text-gray-500, [data-theme="tome"] .text-gray-500,
+[data-theme="midnight"] .text-slate-500, [data-theme="tome"] .text-slate-500 { color: var(--sp-fg-3); }
+[data-theme="midnight"] .text-gray-400, [data-theme="tome"] .text-gray-400,
+[data-theme="midnight"] .text-slate-400, [data-theme="tome"] .text-slate-400 { color: var(--sp-fg-4); }
+[data-theme="midnight"] .placeholder-gray-500::placeholder,
+[data-theme="tome"] .placeholder-gray-500::placeholder { color: var(--sp-fg-4); }
+
+/* Borders */
+[data-theme="midnight"] .border-gray-100, [data-theme="tome"] .border-gray-100,
+[data-theme="midnight"] .border-slate-100, [data-theme="tome"] .border-slate-100,
+[data-theme="midnight"] .border-gray-200, [data-theme="tome"] .border-gray-200,
+[data-theme="midnight"] .border-slate-200, [data-theme="tome"] .border-slate-200 { border-color: var(--sp-border); }
+[data-theme="midnight"] .border-gray-300, [data-theme="tome"] .border-gray-300,
+[data-theme="midnight"] .border-slate-300, [data-theme="tome"] .border-slate-300,
+[data-theme="midnight"] .border-gray-400, [data-theme="tome"] .border-gray-400,
+[data-theme="midnight"] .border-slate-400, [data-theme="tome"] .border-slate-400 { border-color: var(--sp-border-strong); }
+[data-theme="midnight"] .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+[data-theme="tome"] .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--sp-divider); }
+
+/* Hover variants (only those actually used) */
+[data-theme="midnight"] .hover\:bg-white:hover,
+[data-theme="tome"] .hover\:bg-white:hover { background-color: var(--sp-bg-surface); }
+[data-theme="midnight"] .hover\:bg-gray-50:hover, [data-theme="tome"] .hover\:bg-gray-50:hover,
+[data-theme="midnight"] .hover\:bg-slate-50:hover, [data-theme="tome"] .hover\:bg-slate-50:hover,
+[data-theme="midnight"] .hover\:bg-gray-100:hover, [data-theme="tome"] .hover\:bg-gray-100:hover { background-color: var(--sp-bg-sunken); }
+[data-theme="midnight"] .hover\:bg-gray-200:hover, [data-theme="tome"] .hover\:bg-gray-200:hover,
+[data-theme="midnight"] .hover\:bg-slate-200:hover, [data-theme="tome"] .hover\:bg-slate-200:hover,
+[data-theme="midnight"] .hover\:bg-ink-50:hover, [data-theme="tome"] .hover\:bg-ink-50:hover { background-color: var(--sp-bg-active); }
+[data-theme="midnight"] .hover\:text-ink-900:hover,
+[data-theme="tome"] .hover\:text-ink-900:hover { color: var(--sp-fg-1); }
+[data-theme="midnight"] .hover\:text-gray-600:hover, [data-theme="tome"] .hover\:text-gray-600:hover,
+[data-theme="midnight"] .hover\:text-slate-600:hover, [data-theme="tome"] .hover\:text-slate-600:hover { color: var(--sp-fg-2); }
+[data-theme="midnight"] .hover\:border-gray-400:hover, [data-theme="tome"] .hover\:border-gray-400:hover,
+[data-theme="midnight"] .hover\:border-slate-400:hover, [data-theme="tome"] .hover\:border-slate-400:hover { border-color: var(--sp-border-strong); }

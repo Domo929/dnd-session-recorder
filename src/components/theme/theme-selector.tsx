@@ -1,24 +1,24 @@
 'use client';
 
-import { type Theme, themes, cycleTheme } from '../themes';
-
-interface ThemeSelectorProps {
-  currentTheme: Theme;
-  onChange: (theme: Theme) => void;
-}
+import { themes, cycleTheme } from '@/lib/theme';
+import { useTheme } from './theme-provider';
 
 /**
- * Compact theme-cycle button for the session page header.
+ * Compact theme-cycle button.
  *
  * Displays the current theme icon + name (e.g. "Daylight") and cycles
  * to the next theme on click: daylight -> midnight -> tome -> daylight.
+ *
+ * Reads/writes the app-wide theme via ThemeProvider context, so it can be
+ * dropped anywhere (navbar, session header, etc.) without wiring props.
  */
-export function ThemeSelector({ currentTheme, onChange }: ThemeSelectorProps) {
+export function ThemeSelector() {
+  const { theme: currentTheme, setTheme } = useTheme();
   const theme = themes[currentTheme];
   const ThemeIcon = theme.icon;
 
   const handleClick = () => {
-    onChange(cycleTheme(currentTheme));
+    setTheme(cycleTheme(currentTheme));
   };
 
   return (
