@@ -13,6 +13,12 @@ export default withAuth(
         if (req.nextUrl.pathname === '/api/health') {
           return true;
         }
+
+        // Allow the Prometheus scrape endpoint; it enforces its own bearer-token
+        // auth (METRICS_TOKEN) and has no NextAuth session.
+        if (req.nextUrl.pathname === '/api/metrics') {
+          return true;
+        }
         
         // Allow auth endpoints
         if (req.nextUrl.pathname.startsWith('/api/auth')) {

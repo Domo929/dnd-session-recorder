@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
 import { maybeEnqueueDiarization } from '@/services/diarization';
 import { logger } from '@/lib/logger';
+import { withHttpMetrics } from '@/lib/metrics';
 
 /**
  * POST /api/sessions/[id]/process
@@ -15,7 +16,7 @@ import { logger } from '@/lib/logger';
  * This endpoint is idempotent and resumable - it checks the current state
  * and only performs necessary steps.
  */
-export async function POST(
+async function postHandler(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -196,3 +197,5 @@ export async function POST(
     );
   }
 }
+
+export const POST = withHttpMetrics('/api/sessions/[id]/process', postHandler);
