@@ -122,6 +122,7 @@ async function transcribeWithOpenAI(audio: Buffer): Promise<{ text: string }> {
   const result = await transcribe({
     model: openai.transcription(modelId),
     audio,
+    maxRetries: 0,
   });
   return { text: result.text };
 }
@@ -143,6 +144,7 @@ async function transcribeWithGoogle(audio: Buffer): Promise<{ text: string }> {
   const modelId = process.env.GOOGLE_TRANSCRIPTION_MODEL || 'gemini-2.5-flash';
   const { text } = await generateText({
     model: google(modelId),
+    maxRetries: 0,
     messages: [
       {
         role: 'user',
@@ -309,5 +311,187 @@ function extForMime(mime: string): string {
     case 'audio/mpeg':
     default:
       return '.mp3';
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Pacing + adaptive backoff for rate-limited transcription providers.
+ *
+ * Sequential chunk transcription against Gemini (or any provider) is
+ * paced to stay under the per-minute request quota, and individual
+ * rate-limit / overload failures are retried with the server's suggested
+ * delay (falling back to exponential backoff) before giving up. These
+ * helpers are pure / dependency-injectable so they unit-test without
+ * real timers or network. See
+ * docs/plans/2026-05-29-resumable-transcription-design.md.
+ * ------------------------------------------------------------------ */
+
+export interface BackoffConfig {
+  /** Max retry attempts after the first try before giving up. */
+  maxRetries: number;
+  /** First fallback backoff (ms) when the server gives no hint. */
+  baseMs: number;
+  /** Upper bound (ms) on any single backoff wait. */
+  maxMs: number;
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = Number.parseInt((value ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Backoff configuration from env with safe defaults. */
+export function getBackoffConfig(): BackoffConfig {
+  const baseMs = parsePositiveInt(process.env.TRANSCRIPTION_BACKOFF_BASE_MS, 5000);
+  const maxMs = parsePositiveInt(process.env.TRANSCRIPTION_BACKOFF_MAX_MS, 60000);
+  return {
+    maxRetries: parsePositiveInt(process.env.TRANSCRIPTION_CHUNK_MAX_RETRIES, 5),
+    baseMs,
+    maxMs: Math.max(maxMs, baseMs),
+  };
+}
+
+/** Minimum gap (ms) between transcription requests from `TRANSCRIPTION_MAX_RPM`. */
+export function transcriptionMinIntervalMs(): number {
+  const rpm = parsePositiveInt(process.env.TRANSCRIPTION_MAX_RPM, 60);
+  return Math.ceil(60000 / rpm);
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function errorStatusCode(err: unknown): number | undefined {
+  if (err && typeof err === 'object') {
+    const obj = err as Record<string, unknown>;
+    for (const key of ['statusCode', 'status', 'code']) {
+      const v = obj[key];
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string' && /^\d+$/.test(v)) return Number.parseInt(v, 10);
+    }
+  }
+  return undefined;
+}
+
+const RATE_LIMIT_PATTERN =
+  /\b(429|503)\b|resource_exhausted|too many requests|rate[ _-]?limit|quota|high demand|overload|unavailable|service is temporarily/i;
+
+/**
+ * True for transient provider errors worth retrying (rate limit / overload /
+ * temporary unavailability). Auth, bad-audio, and other hard errors return
+ * false so they fail fast.
+ */
+export function isRetryableTranscriptionError(err: unknown): boolean {
+  const status = errorStatusCode(err);
+  if (status === 429 || status === 503) return true;
+  if (status === 400 || status === 401 || status === 403 || status === 404) return false;
+  return RATE_LIMIT_PATTERN.test(errorMessage(err));
+}
+
+/**
+ * Pull the provider's suggested retry delay (ms) out of an error, or null.
+ * Handles Gemini "Please retry in 58.45s", structured `retryDelay: "58s"`,
+ * and a numeric `Retry-After` response header (seconds).
+ */
+export function parseRetryDelayMs(err: unknown): number | null {
+  if (err && typeof err === 'object') {
+    const headers = (err as Record<string, unknown>).responseHeaders;
+    if (headers && typeof headers === 'object') {
+      const raw = (headers as Record<string, unknown>)['retry-after'];
+      const secs = typeof raw === 'string' ? Number.parseFloat(raw) : typeof raw === 'number' ? raw : NaN;
+      if (Number.isFinite(secs) && secs >= 0) return Math.round(secs * 1000);
+    }
+  }
+
+  const msg = errorMessage(err);
+  const patterns = [
+    /retry in ([\d.]+)\s*s/i,
+    /retryDelay["'\s:=]+([\d.]+)s/i,
+    /retry[- ]after["'\s:=]+([\d.]+)/i,
+  ];
+  for (const re of patterns) {
+    const m = msg.match(re);
+    if (m) {
+      const secs = Number.parseFloat(m[1]);
+      if (Number.isFinite(secs) && secs >= 0) return Math.round(secs * 1000);
+    }
+  }
+  return null;
+}
+
+/**
+ * How long to wait (ms) before retry `attempt` (0-based). Honors the server's
+ * hint when present (capped), otherwise exponential backoff base*3^attempt
+ * (5s → 15s → 45s …) capped at `maxMs`.
+ */
+export function computeBackoffMs(attempt: number, config: BackoffConfig, serverHintMs: number | null): number {
+  if (serverHintMs != null && serverHintMs >= 0) {
+    return Math.min(serverHintMs, config.maxMs);
+  }
+  const exp = config.baseMs * Math.pow(3, Math.max(0, attempt));
+  return Math.min(exp, config.maxMs);
+}
+
+/** A stateful pacer that enforces a minimum interval between awaited calls. */
+export function createTranscriptionPacer(
+  minIntervalMs: number,
+  deps: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
+): () => Promise<void> {
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? defaultSleep;
+  let last = 0;
+  let started = false;
+  return async function pace(): Promise<void> {
+    if (started) {
+      const elapsed = now() - last;
+      if (elapsed < minIntervalMs) {
+        await sleep(minIntervalMs - elapsed);
+      }
+    }
+    started = true;
+    last = now();
+  };
+}
+
+/**
+ * Transcribe one chunk with adaptive backoff. Retries retryable rate-limit /
+ * overload errors up to `config.maxRetries`, honoring the server's suggested
+ * delay; re-throws non-retryable errors immediately. Dependencies are
+ * injectable for testing.
+ */
+export async function transcribeWithBackoff(
+  audio: Buffer,
+  opts: {
+    transcribeFn?: (audio: Buffer) => Promise<{ text: string }>;
+    sleep?: (ms: number) => Promise<void>;
+    config?: BackoffConfig;
+  } = {},
+): Promise<{ text: string }> {
+  const transcribeFn = opts.transcribeFn ?? transcribeAudio;
+  const sleep = opts.sleep ?? defaultSleep;
+  const config = opts.config ?? getBackoffConfig();
+
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await transcribeFn(audio);
+    } catch (err) {
+      if (!isRetryableTranscriptionError(err) || attempt >= config.maxRetries) {
+        throw err;
+      }
+      const delay = computeBackoffMs(attempt, config, parseRetryDelayMs(err));
+      await sleep(delay);
+      attempt += 1;
+    }
   }
 }
