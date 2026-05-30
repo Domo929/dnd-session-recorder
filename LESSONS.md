@@ -96,3 +96,6 @@ When you wire a test runner to CI for the first time, expect to find dead tests 
 - Wants test stages clearly separated with little overlap.
 - Prefers testcontainers + mocked AI for PR-level tests.
 - Goes step-by-step on multi-step plans rather than bundling. Wait for the green light before proceeding.
+
+### Generate Prisma with local CLI, not npx latest
+If `node_modules` is missing, `npm run db:generate` may make `npx prisma generate` prompt to install the latest Prisma (e.g. v7), which can fail against this Prisma 6 schema. Run `npm install` first so the script uses the repo-pinned Prisma CLI.
