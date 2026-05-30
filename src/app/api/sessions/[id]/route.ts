@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/services/database';
-import { requireAuth } from '@/lib/auth-utils';
+import { requireSessionAccess } from '@/lib/permissions';
 import { logger } from '@/lib/logger';
 
 const updateSessionStatusSchema = z.object({
@@ -21,7 +21,11 @@ export async function GET(
         { status: 400 }
       );
     }
-    
+
+    // Any member of the session's campaign may read it.
+    const access = await requireSessionAccess(sessionId, 'any');
+    if (!access.ok) return access.response;
+
     const session = await db.getSessionById(sessionId);
     
     if (!session) {
@@ -60,7 +64,11 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    
+
+    // Only the campaign owner may change a session's status.
+    const access = await requireSessionAccess(sessionId, 'owner');
+    if (!access.ok) return access.response;
+
     const body = await request.json();
     const validatedData = updateSessionStatusSchema.parse(body);
     
@@ -88,10 +96,6 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Check authentication
-    const { error: authError } = await requireAuth();
-    if (authError) return authError;
-
     const sessionId = (await params).id;
 
     if (!sessionId) {
@@ -100,6 +104,10 @@ export async function DELETE(
         { status: 400 }
       );
     }
+
+    // Only the campaign owner may delete a session.
+    const access = await requireSessionAccess(sessionId, 'owner');
+    if (!access.ok) return access.response;
 
     // Get session to return campaign ID for redirect
     const session = await db.getSessionById(sessionId);
