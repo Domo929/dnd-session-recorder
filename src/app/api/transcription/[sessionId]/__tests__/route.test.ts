@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextResponse } from 'next/server';
 
 vi.mock('@/services/database', () => ({ db: {} }));
 vi.mock('@/lib/auth-utils', () => ({ requireAuth: vi.fn() }));
@@ -102,6 +103,21 @@ beforeEach(() => {
 });
 
 describe('POST /api/transcription/[sessionId] — resumable transcription', () => {
+  it('returns the access response and runs nothing when the caller lacks session access', async () => {
+    vi.mocked(requireSessionAccess).mockResolvedValueOnce({
+      ok: false,
+      response: NextResponse.json({ error: 'Not found' }, { status: 404 }),
+    } as never);
+
+    const { req, ctx } = makeRequest();
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(404);
+
+    // No pipeline work should happen on a denied request.
+    expect(db.getTranscriptions).not.toHaveBeenCalled();
+    expect(transcribeWithBackoff).not.toHaveBeenCalled();
+  });
+
   it('transcribes every chunk on a fresh run and persists each one', async () => {
     vi.mocked(transcribeWithBackoff).mockImplementation(async () => ({ text: 'X' }));
 
@@ -147,8 +163,7 @@ describe('POST /api/transcription/[sessionId] — resumable transcription', () =
     expect(db.saveTranscription).toHaveBeenCalledWith('sess_1', 'AAA BBB CCC');
   });
 
-  it('signature mismatch wipes partial work and restarts from scratch', async () => {
-    (db.getTranscriptionChunkCount as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+  it('signature mismatch wipes partial work and restarts from scratch', async () => {    (db.getTranscriptionChunkCount as ReturnType<typeof vi.fn>).mockResolvedValue(5);
     vi.mocked(transcribeWithBackoff).mockResolvedValue({ text: 'Z' });
 
     const { req, ctx } = makeRequest();
