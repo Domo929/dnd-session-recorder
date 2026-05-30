@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/services/database', () => ({ db: {} }));
 vi.mock('@/lib/auth-utils', () => ({ requireAuth: vi.fn() }));
+vi.mock('@/lib/permissions', () => ({ requireSessionAccess: vi.fn() }));
 vi.mock('@/lib/whitelist', () => ({ isTestAccount: vi.fn(() => false) }));
 vi.mock('@/services/storage', () => ({ getStorageService: vi.fn() }));
 vi.mock('@/services/storage/materialize', () => ({
@@ -33,6 +34,7 @@ vi.mock('@/lib/logger', () => ({
 
 import { db } from '@/services/database';
 import { requireAuth } from '@/lib/auth-utils';
+import { requireSessionAccess } from '@/lib/permissions';
 import { withMaterializedAudio } from '@/services/storage/materialize';
 import { splitAudioBySize } from '@/services/audioProcessing';
 import { transcribeWithBackoff } from '@/lib/ai';
@@ -60,6 +62,13 @@ beforeEach(() => {
   vi.mocked(requireAuth).mockResolvedValue({
     error: undefined,
     user: { email: 'real@example.com' },
+  } as never);
+
+  vi.mocked(requireSessionAccess).mockResolvedValue({
+    ok: true,
+    userId: 'user_1',
+    role: 'owner',
+    campaignId: 'camp_1',
   } as never);
 
   // Materialize just invokes the callback with a local path.
