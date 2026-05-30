@@ -45,18 +45,26 @@ function triggerPipelineStep(
         status: res.status,
         detail,
       });
-      await db
-        .updateSession(sessionId, {
+
+      // Only fail the session if it's still sitting in the in-progress state we
+      // set before firing this step. A child route may deliberately move the
+      // session elsewhere on a non-OK response (e.g. transcription's file
+      // reconciliation reverts to `draft` and returns 404); don't clobber that.
+      const inProgressStatus = step === 'transcription' ? 'transcribing' : 'summarizing';
+      try {
+        const current = await db.getSessionById(sessionId);
+        if (current?.status !== inProgressStatus) return;
+        await db.updateSession(sessionId, {
           status: 'error',
           errorStep: step,
           errorMessage: `${step} request failed with status ${res.status}`,
-        })
-        .catch((updateErr) => {
-          logger.error('Failed to mark session errored after non-OK step', updateErr as Error, {
-            sessionId,
-            step,
-          });
         });
+      } catch (updateErr) {
+        logger.error('Failed to mark session errored after non-OK step', updateErr as Error, {
+          sessionId,
+          step,
+        });
+      }
     })
     .catch((err) => {
       // Ignore the expected long-poll timeout - the step runs in the background.
