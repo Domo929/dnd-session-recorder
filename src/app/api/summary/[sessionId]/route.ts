@@ -5,6 +5,7 @@ import { getCampaignAccess, requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { generateAiText, isAiMocked } from '@/lib/ai';
 import { buildSpeakerContext, buildSpeakerSummaryPrompt, type SpeakerContext } from '@/services/speakerContext';
+import { buildTurns, renderTurnsWithNames } from '@/lib/transcriptFormat';
 import { buildNpcInferencePrompt, parseNpcSuggestions } from '@/lib/npcInference';
 import { isTestAccount } from '@/lib/whitelist';
 import { logger } from '@/lib/logger';
@@ -32,6 +33,26 @@ function formatTranscriptionsForSummary(transcriptions: Array<{ text: string }>)
   return transcriptions
     .map(t => t.text)
     .join(' ');
+}
+
+/**
+ * Build the basic-mode transcript text for the summary prompt, applying any
+ * speaker relabels (Track A). When the user has assigned names, the prompt sees
+ * `Name: text` per turn instead of `Speaker N`; otherwise it falls back to the
+ * plain joined transcript.
+ */
+async function formatBasicTranscriptForSummary(
+  sessionId: string,
+  transcriptions: Array<{ text: string }>,
+): Promise<string> {
+  const { defaults, turns } = await db.getSpeakerLabels(sessionId);
+  if (defaults.length === 0 && turns.length === 0) {
+    return formatTranscriptionsForSummary(transcriptions);
+  }
+  const allTurns = buildTurns(transcriptions);
+  const defaultMap = Object.fromEntries(defaults.map((d) => [d.speakerKey, d.name]));
+  const overrideMap = Object.fromEntries(turns.map((t) => [t.turnIndex, t.name]));
+  return renderTurnsWithNames(allTurns, defaultMap, overrideMap);
 }
 
 /**
@@ -192,7 +213,7 @@ export async function POST(
         campaignSystemPrompt: campaign.systemPrompt,
       });
     } else {
-      const formattedText = formatTranscriptionsForSummary(transcriptions);
+      const formattedText = await formatBasicTranscriptForSummary(sessionId, transcriptions);
       let basePrompt = `You are a skilled storyteller and D&D campaign chronicler. Below is a transcript of a D&D session. Please create an engaging summary that:
 
 1. Tells the story of what happened in this session

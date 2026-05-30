@@ -198,8 +198,52 @@ model GamingSession {
   diarizationJobs DiarizationJob[]
   npcSuggestions  SessionNpcSuggestion[]
   transcriptionChunks TranscriptionChunk[]
+  speakerDefaults SessionSpeakerDefault[]
+  speakerTurns    SessionSpeakerTurn[]
 
   @@map("gaming_sessions")
+}
+
+/// Basic-mode relabeling (Track A): a per-speaker-key default name, e.g. map
+/// every `Speaker 1` turn to "Bruce" unless a per-turn override says otherwise.
+/// Text-only and non-destructive — the stored transcript keeps `Speaker N`.
+model SessionSpeakerDefault {
+  id             String   @id @default(cuid())
+  sessionId      String   @map("session_id")
+  campaignId     String   @map("campaign_id") // denormalized for campaign registry queries
+  speakerKey     String   @map("speaker_key") // e.g. "Speaker 1"
+  name           String
+  normalizedName String   @map("normalized_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  session GamingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, speakerKey])
+  @@index([campaignId])
+  @@map("session_speaker_defaults")
+}
+
+/// Basic-mode relabeling (Track A): a per-turn override that wins over the
+/// per-speaker-key default, because `Speaker N` is unreliably reused for
+/// different people. `turnIndex` is the position in the parsed turn list
+/// (see buildTurns in src/lib/transcriptFormat.ts); stable while the stored
+/// transcript is unchanged and cleared on a fresh transcription run.
+model SessionSpeakerTurn {
+  id             String   @id @default(cuid())
+  sessionId      String   @map("session_id")
+  campaignId     String   @map("campaign_id")
+  turnIndex      Int      @map("turn_index")
+  name           String
+  normalizedName String   @map("normalized_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  session GamingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, turnIndex])
+  @@index([campaignId])
+  @@map("session_speaker_turns")
 }
 
 model Transcription {

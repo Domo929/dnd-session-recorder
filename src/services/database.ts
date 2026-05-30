@@ -362,7 +362,13 @@ export class DatabaseService {
       await tx.transcription.deleteMany({
         where: { sessionId },
       });
-      
+
+      // A fresh transcript invalidates basic-mode turn indices, so drop any
+      // per-turn relabels (per-speaker-key defaults are keyed by label, but we
+      // clear them too for a clean slate on re-transcription).
+      await tx.sessionSpeakerTurn.deleteMany({ where: { sessionId } });
+      await tx.sessionSpeakerDefault.deleteMany({ where: { sessionId } });
+
       // Insert new transcriptions
       await tx.transcription.createMany({
         data: segments.map((segment) => ({
@@ -382,7 +388,11 @@ export class DatabaseService {
       await tx.transcription.deleteMany({
         where: { sessionId },
       });
-      
+
+      // A fresh transcript invalidates basic-mode turn indices (see above).
+      await tx.sessionSpeakerTurn.deleteMany({ where: { sessionId } });
+      await tx.sessionSpeakerDefault.deleteMany({ where: { sessionId } });
+
       // Insert single transcription record with dummy timestamps
       await tx.transcription.create({
         data: {
@@ -1323,6 +1333,135 @@ export class DatabaseService {
       where: { id: sessionId },
       data: { needsResummarize: false },
     });
+  }
+
+  // ── Basic-mode speaker relabeling (Track A) ───────────────────────────────
+
+  /** Per-speaker-key defaults and per-turn overrides for a basic-mode session. */
+  async getSpeakerLabels(sessionId: string): Promise<{
+    defaults: { speakerKey: string; name: string }[];
+    turns: { turnIndex: number; name: string }[];
+  }> {
+    const [defaults, turns] = await Promise.all([
+      prisma.sessionSpeakerDefault.findMany({
+        where: { sessionId },
+        select: { speakerKey: true, name: true },
+        orderBy: { speakerKey: 'asc' },
+      }),
+      prisma.sessionSpeakerTurn.findMany({
+        where: { sessionId },
+        select: { turnIndex: true, name: true },
+        orderBy: { turnIndex: 'asc' },
+      }),
+    ]);
+    return { defaults, turns };
+  }
+
+  /**
+   * Upsert per-speaker-key defaults and/or per-turn overrides for a session.
+   * A blank/empty name clears that entry. Names are stored verbatim (already
+   * canonicalized by the caller) plus a normalized form for registry queries.
+   * Flags the session for re-summarization whenever anything changed.
+   */
+  async upsertSpeakerLabels(
+    sessionId: string,
+    campaignId: string,
+    input: {
+      defaults?: { speakerKey: string; name: string }[];
+      turns?: { turnIndex: number; name: string }[];
+    },
+    normalize: (name: string) => string,
+  ): Promise<void> {
+    const defaults = input.defaults ?? [];
+    const turns = input.turns ?? [];
+    if (defaults.length === 0 && turns.length === 0) return;
+
+    await prisma.$transaction(async (tx) => {
+      for (const d of defaults) {
+        const name = d.name.trim();
+        if (!name) {
+          await tx.sessionSpeakerDefault.deleteMany({
+            where: { sessionId, speakerKey: d.speakerKey },
+          });
+          continue;
+        }
+        await tx.sessionSpeakerDefault.upsert({
+          where: { sessionId_speakerKey: { sessionId, speakerKey: d.speakerKey } },
+          create: { sessionId, campaignId, speakerKey: d.speakerKey, name, normalizedName: normalize(name) },
+          update: { name, normalizedName: normalize(name) },
+        });
+      }
+      for (const t of turns) {
+        const name = t.name.trim();
+        if (!name) {
+          await tx.sessionSpeakerTurn.deleteMany({
+            where: { sessionId, turnIndex: t.turnIndex },
+          });
+          continue;
+        }
+        await tx.sessionSpeakerTurn.upsert({
+          where: { sessionId_turnIndex: { sessionId, turnIndex: t.turnIndex } },
+          create: { sessionId, campaignId, turnIndex: t.turnIndex, name, normalizedName: normalize(name) },
+          update: { name, normalizedName: normalize(name) },
+        });
+      }
+      await tx.gamingSession.update({
+        where: { id: sessionId },
+        data: { needsResummarize: true },
+      });
+    });
+  }
+
+  /**
+   * The virtual campaign speaker registry: a deduplicated, casing-canonical
+   * union of names usable as autocomplete suggestions for relabeling —
+   * enrolled voice labels, campaign member display names, accepted NPC
+   * suggestions, and names already used in this campaign's relabels. Returned
+   * in a stable order (voices, members, NPCs, relabels) so fuzzy-match ties
+   * resolve to the most authoritative source.
+   */
+  async getCampaignSpeakerRegistry(campaignId: string): Promise<string[]> {
+    const [voices, members, npcs, defaults, turns] = await Promise.all([
+      prisma.voiceSample.findMany({
+        where: { member: { campaignId } },
+        select: { label: true },
+      }),
+      prisma.member.findMany({
+        where: { campaignId },
+        select: { user: { select: { name: true } } },
+      }),
+      prisma.sessionNpcSuggestion.findMany({
+        where: { session: { campaignId }, status: 'accepted' },
+        select: { suggestedName: true },
+      }),
+      prisma.sessionSpeakerDefault.findMany({
+        where: { campaignId },
+        select: { name: true },
+      }),
+      prisma.sessionSpeakerTurn.findMany({
+        where: { campaignId },
+        select: { name: true },
+      }),
+    ]);
+
+    const ordered = [
+      ...voices.map((v) => v.label),
+      ...members.map((m) => m.user.name).filter((n): n is string => !!n),
+      ...npcs.map((n) => n.suggestedName),
+      ...defaults.map((d) => d.name),
+      ...turns.map((t) => t.name),
+    ];
+
+    // Dedupe case-insensitively, keeping the first (most authoritative) casing.
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of ordered) {
+      const key = name.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name.trim());
+    }
+    return out;
   }
 
   // ── Retention (speaker-labels cron) ───────────────────────────────────────

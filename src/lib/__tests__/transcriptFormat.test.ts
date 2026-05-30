@@ -3,6 +3,8 @@ import {
   parseSpeakerTurns,
   hasSpeakerLabels,
   speakerColorIndex,
+  buildTurns,
+  resolveTurnName,
 } from '@/lib/transcriptFormat';
 
 describe('parseSpeakerTurns', () => {
@@ -108,5 +110,55 @@ describe('speakerColorIndex', () => {
     expect(a).toBe(b);
     expect(a).toBeGreaterThanOrEqual(0);
     expect(a).toBeLessThan(5);
+  });
+});
+
+describe('buildTurns', () => {
+  it('assigns a stable contiguous turnIndex across rows', () => {
+    const turns = buildTurns([
+      { text: 'Speaker 1: hello Speaker 2: hi' },
+      { text: 'Speaker 1: again' },
+    ]);
+    expect(turns).toEqual([
+      { turnIndex: 0, speakerKey: 'Speaker 1', text: 'hello' },
+      { turnIndex: 1, speakerKey: 'Speaker 2', text: 'hi' },
+      { turnIndex: 2, speakerKey: 'Speaker 1', text: 'again' },
+    ]);
+  });
+
+  it('represents an unattributed lead-in as a null speakerKey turn', () => {
+    const turns = buildTurns([{ text: 'intro words Speaker 1: hi' }]);
+    expect(turns[0]).toEqual({ turnIndex: 0, speakerKey: null, text: 'intro words' });
+    expect(turns[1].speakerKey).toBe('Speaker 1');
+  });
+
+  it('returns an empty list for empty rows', () => {
+    expect(buildTurns([])).toEqual([]);
+    expect(buildTurns([{ text: '   ' }])).toEqual([]);
+  });
+});
+
+describe('resolveTurnName', () => {
+  const turns = buildTurns([{ text: 'Speaker 1: a Speaker 2: b Speaker 1: c' }]);
+
+  it('falls back to the raw speaker key with no labels', () => {
+    expect(resolveTurnName(turns[0], {}, {})).toBe('Speaker 1');
+  });
+
+  it('applies a per-speaker-key default', () => {
+    expect(resolveTurnName(turns[0], { 'Speaker 1': 'Bruce' }, {})).toBe('Bruce');
+    expect(resolveTurnName(turns[2], { 'Speaker 1': 'Bruce' }, {})).toBe('Bruce');
+  });
+
+  it('lets a per-turn override win over the default', () => {
+    const defaults = { 'Speaker 1': 'Bruce' };
+    const overrides = { 2: 'Alice' };
+    expect(resolveTurnName(turns[0], defaults, overrides)).toBe('Bruce');
+    expect(resolveTurnName(turns[2], defaults, overrides)).toBe('Alice');
+  });
+
+  it('returns null for an unattributed turn with no override', () => {
+    const lead = buildTurns([{ text: 'just words' }])[0];
+    expect(resolveTurnName(lead, {}, {})).toBeNull();
   });
 });
