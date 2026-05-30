@@ -877,24 +877,29 @@ export class DatabaseService {
   }
 
   /**
-   * Atomically claim a `running` job for callback processing by flipping it
-   * running -> completed. Returns true iff this caller won. Closes the TOCTOU
-   * between the callback's replay guard and the destructive transcription
-   * replacement: only the winner performs the work, concurrent replays get a
-   * count of 0 (and must return 409). The final completeDiarizationJob still
-   * sets finishedAt/attemptCount; on processing error the catch reverts the job
-   * to `failed`.
+   * Atomically claim a `running` job for callback processing by stamping
+   * `finishedAt` while it is still NULL (keeping status `running`). Returns true
+   * iff this caller won. Closes the TOCTOU between the callback's replay guard
+   * and the destructive transcription replacement: only the winner performs the
+   * work, concurrent replays see `finishedAt` already set and get a count of 0
+   * (and must return 409).
+   *
+   * Crucially this does NOT move the job to a terminal status, so if the handler
+   * dies mid-processing (crash/restart) the job stays `running` and the
+   * reconcile sweep can still recover it. The final completeDiarizationJob flips
+   * it to `completed`; on a thrown error the catch reverts it to `failed`.
    */
   async claimDiarizationJobForCallback(jobId: string): Promise<boolean> {
     const { count } = await prisma.diarizationJob.updateMany({
-      where: { id: jobId, status: 'running' },
-      data: { status: 'completed' },
+      where: { id: jobId, status: 'running', finishedAt: null },
+      data: { finishedAt: new Date() },
     });
     return count > 0;
   }
 
   /** Running jobs that have an ACI resource (cleanup-loop candidates). */
-  async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {    return prisma.diarizationJob.findMany({
+  async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {
+    return prisma.diarizationJob.findMany({
       where: { status: 'running', aciResourceId: { not: null } },
     });
   }
@@ -907,7 +912,7 @@ export class DatabaseService {
     await prisma.$transaction(async (tx) => {
       const job = await tx.diarizationJob.update({
         where: { id: jobId },
-        data: { status: 'queued', aciResourceId: null, region: null, startedAt: null },
+        data: { status: 'queued', aciResourceId: null, region: null, startedAt: null, finishedAt: null },
       });
       await tx.gamingSession.update({
         where: { id: job.sessionId },
