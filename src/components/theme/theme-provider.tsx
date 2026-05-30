@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from 'react';
 import {
@@ -48,8 +49,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Reflect theme changes onto the document and persist them.
+  // Reflect theme changes onto the document and persist them. The pre-paint
+  // inline script in layout.tsx already applied the correct attribute, so we
+  // skip the first run — otherwise we'd briefly overwrite it with DEFAULT_THEME
+  // before the localStorage sync above re-renders with the real value (flash).
+  const skipFirstReflect = useRef(true);
   useEffect(() => {
+    if (skipFirstReflect.current) {
+      skipFirstReflect.current = false;
+      return;
+    }
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-theme', theme);
     }

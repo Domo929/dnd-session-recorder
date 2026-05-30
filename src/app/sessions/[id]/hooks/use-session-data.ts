@@ -38,6 +38,9 @@ export function useSessionData({ sessionId }: UseSessionDataProps) {
       if (session.status === 'transcribing' || session.status === 'summarizing') {
         return 2000; // Every 2 seconds
       }
+      // `transcribed` is a transitional state between transcription finishing and
+      // the summary step starting; keep polling so the view follows the pipeline.
+      if (session.status === 'transcribed') return 2000;
       if (session.status === 'uploaded') return 1000;
       if (session.status === 'error') return 5000;
       return false; // Don't poll when completed

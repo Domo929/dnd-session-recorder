@@ -26,6 +26,7 @@
     "test:staging:ui": "playwright test --config=playwright.config.staging.ts --ui",
     "test:headed": "playwright test --config=playwright.config.ci.ts --headed",
     "test:workflows": "playwright test --config=playwright.config.workflows.ts",
+    "test:post-deploy": "playwright test --config=playwright.config.post-deploy.ts",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest"
   },
