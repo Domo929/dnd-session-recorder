@@ -6,6 +6,30 @@ import Link from 'next/link';
 import { Calendar, Clock, BookOpen, ArrowLeft, AlertCircle, FileText, Download, Search } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useState } from 'react';
+import { parseSpeakerTurns, speakerColorIndex } from '@/lib/transcriptFormat';
+
+const SPEAKER_COLORS = [
+  'text-gray-900',
+  'text-blue-700',
+  'text-emerald-700',
+  'text-amber-700',
+  'text-violet-700',
+  'text-rose-700',
+];
+
+// Render text with case-insensitive highlight of `term` (no-op when term is empty).
+function highlight(text: string, term: string) {
+  if (!term) return text;
+  return text.split(new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, i) =>
+    part.toLowerCase() === term.toLowerCase() ? (
+      <mark key={i} className="bg-yellow-200 px-1 rounded">
+        {part}
+      </mark>
+    ) : (
+      part
+    ),
+  );
+}
 
 interface Session {
   id: number;
@@ -256,24 +280,26 @@ export default function SessionTranscriptPage() {
               {/* Display single transcript text */}
               {transcriptions && transcriptions.length > 0 && (
                 <div className="bg-gray-50 rounded-lg p-6">
-                  <div className="prose max-w-none">
-                    <p className="text-gray-900 leading-relaxed whitespace-pre-wrap text-base">
-                      {searchTerm ? (
-                        transcriptions[0].text
-                          .split(new RegExp(`(${searchTerm})`, 'gi'))
-                          .map((part, i) => 
-                            part.toLowerCase() === searchTerm.toLowerCase() ? (
-                              <mark key={i} className="bg-yellow-200 px-1 rounded">
-                                {part}
-                              </mark>
-                            ) : (
-                              part
-                            )
-                          )
-                      ) : (
-                        transcriptions[0].text
-                      )}
-                    </p>
+                  <div className="prose max-w-none space-y-4">
+                    {parseSpeakerTurns(transcriptions[0].text).map((turn, ti) => (
+                      <p
+                        key={ti}
+                        className="text-gray-900 leading-relaxed whitespace-pre-wrap text-base"
+                      >
+                        {turn.speaker && (
+                          <span
+                            className={`font-semibold mr-1.5 ${
+                              SPEAKER_COLORS[
+                                speakerColorIndex(turn.speaker, SPEAKER_COLORS.length)
+                              ]
+                            }`}
+                          >
+                            {turn.speaker}:
+                          </span>
+                        )}
+                        {highlight(turn.text, searchTerm)}
+                      </p>
+                    ))}
                   </div>
                 </div>
               )}
