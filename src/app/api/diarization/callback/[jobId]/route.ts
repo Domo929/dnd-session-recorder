@@ -79,6 +79,15 @@ async function postHandler(
   const sessionId = job.sessionId;
   const campaignId = job.session.campaignId;
 
+  // Atomic claim closes the TOCTOU between the replay guard above and the
+  // destructive transcription replacement below: only one concurrent callback
+  // (e.g. a container retry) wins; the rest get 409. Done after payload
+  // validation so a bad payload doesn't strand the job as "claimed".
+  if (!(await db.claimDiarizationJobForCallback(jobId))) {
+    logger.warn('Diarization callback lost the claim race', { jobId });
+    return NextResponse.json({ error: 'Job already processed' }, { status: 409 });
+  }
+
   try {
     const fingerprints = await db.getCampaignFingerprints(campaignId);
     const config = getFingerprintConfig();

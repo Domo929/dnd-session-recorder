@@ -204,6 +204,21 @@ describe('dispatchQueuedJobs', () => {
     expect(db.claimDiarizationJobForDispatch).toHaveBeenCalledWith('b');
   });
 
+  it('deletes the just-created container if persisting it to the DB fails', async () => {
+    const db = makeDb([makeJob()]);
+    vi.mocked(db.updateDiarizationJob).mockRejectedValue(new Error('db down'));
+    const aci = makeAci();
+    const deps: DispatcherDeps = { db, aci, storage, config };
+
+    await dispatchQueuedJobs(deps);
+
+    // The container was created but couldn't be persisted, so it must be
+    // deleted to avoid leaking a billing GPU container the DB can't see.
+    expect(aci.delete).toHaveBeenCalledWith('/aci/job-1');
+    // Persist failure is a dispatch failure: the job is reverted for retry.
+    expect(db.revertDiarizationJobToQueued).toHaveBeenCalledWith('job-1');
+  });
+
   it('skips a job it loses the claim race for', async () => {
     const db = makeDb([makeJob()]);
     vi.mocked(db.claimDiarizationJobForDispatch).mockResolvedValue(false);

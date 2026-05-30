@@ -876,9 +876,25 @@ export class DatabaseService {
     return count > 0;
   }
 
+  /**
+   * Atomically claim a `running` job for callback processing by flipping it
+   * running -> completed. Returns true iff this caller won. Closes the TOCTOU
+   * between the callback's replay guard and the destructive transcription
+   * replacement: only the winner performs the work, concurrent replays get a
+   * count of 0 (and must return 409). The final completeDiarizationJob still
+   * sets finishedAt/attemptCount; on processing error the catch reverts the job
+   * to `failed`.
+   */
+  async claimDiarizationJobForCallback(jobId: string): Promise<boolean> {
+    const { count } = await prisma.diarizationJob.updateMany({
+      where: { id: jobId, status: 'running' },
+      data: { status: 'completed' },
+    });
+    return count > 0;
+  }
+
   /** Running jobs that have an ACI resource (cleanup-loop candidates). */
-  async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {
-    return prisma.diarizationJob.findMany({
+  async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {    return prisma.diarizationJob.findMany({
       where: { status: 'running', aciResourceId: { not: null } },
     });
   }
