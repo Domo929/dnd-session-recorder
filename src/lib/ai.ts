@@ -12,6 +12,7 @@ import {
   buildVocabularyPromptSection,
   buildVocabularyPhraseHint,
 } from '@/lib/transcriptionVocabulary';
+import { recordAiCall, estimateTokensFromChars } from '@/lib/metrics';
 
 /**
  * Centralized, provider-agnostic access to the AI services
@@ -118,6 +119,35 @@ export async function transcribeAudio(
   }
 
   const provider = transcriptionProvider();
+  const model = transcriptionModelId(provider);
+  const start = Date.now();
+  try {
+    const result = await runTranscription(provider, audio, context);
+    recordAiCall({
+      provider,
+      model,
+      kind: 'transcription',
+      status: 'success',
+      durationSeconds: (Date.now() - start) / 1000,
+    });
+    return result;
+  } catch (err) {
+    recordAiCall({
+      provider,
+      model,
+      kind: 'transcription',
+      status: 'error',
+      durationSeconds: (Date.now() - start) / 1000,
+    });
+    throw err;
+  }
+}
+
+function runTranscription(
+  provider: TranscriptionProvider,
+  audio: Buffer,
+  context?: TranscriptionContext,
+): Promise<{ text: string }> {
   switch (provider) {
     case 'google':
       return transcribeWithGoogle(audio, context);
@@ -126,6 +156,19 @@ export async function transcribeAudio(
     case 'openai':
     default:
       return transcribeWithOpenAI(audio, context);
+  }
+}
+
+/** Resolve the model id used for a transcription provider (for metric labels). */
+function transcriptionModelId(provider: TranscriptionProvider): string {
+  switch (provider) {
+    case 'google':
+      return process.env.GOOGLE_TRANSCRIPTION_MODEL || 'gemini-2.5-flash';
+    case 'whisper-local':
+      return process.env.WHISPER_MODEL || 'base.en';
+    case 'openai':
+    default:
+      return process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1';
   }
 }
 
@@ -285,11 +328,42 @@ export async function generateAiText(prompt: string, kind: AiTextKind): Promise<
     return { text: MOCK_TEXT[kind] };
   }
 
-  const result = await generateText({
-    model: summaryModel(),
-    prompt,
-  });
-  return { text: result.text };
+  const provider = summaryProvider();
+  const model = summaryModelId(provider);
+  const start = Date.now();
+  try {
+    const result = await generateText({
+      model: summaryModel(),
+      prompt,
+    });
+    const usage = result.usage as { inputTokens?: number; outputTokens?: number } | undefined;
+    recordAiCall({
+      provider,
+      model,
+      kind,
+      status: 'success',
+      durationSeconds: (Date.now() - start) / 1000,
+      inputTokens: usage?.inputTokens ?? estimateTokensFromChars(prompt.length),
+      outputTokens: usage?.outputTokens ?? estimateTokensFromChars(result.text.length),
+    });
+    return { text: result.text };
+  } catch (err) {
+    recordAiCall({
+      provider,
+      model,
+      kind,
+      status: 'error',
+      durationSeconds: (Date.now() - start) / 1000,
+    });
+    throw err;
+  }
+}
+
+/** Resolve the summary model id (for metric labels), mirroring `summaryModel()`. */
+function summaryModelId(provider: SummaryProvider): string {
+  return provider === 'google'
+    ? process.env.GOOGLE_SUMMARY_MODEL || 'gemini-2.5-flash'
+    : process.env.OPENAI_SUMMARY_MODEL || 'gpt-4o';
 }
 
 function summaryModel(): LanguageModel {
