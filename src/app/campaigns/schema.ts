@@ -13,6 +13,10 @@ export const campaignSchema = z.object({
   systemPrompt: z
     .string()
     .max(2000, 'System prompt must be less than 2000 characters'),
+
+  transcriptionVocabulary: z
+    .string()
+    .max(4000, 'Vocabulary must be less than 4000 characters'),
 });
 
 export type CampaignFormData = z.infer<typeof campaignSchema>;

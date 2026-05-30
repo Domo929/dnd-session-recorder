@@ -16,6 +16,7 @@ interface Campaign {
   name: string;
   description: string | null;
   systemPrompt: string | null;
+  transcriptionVocabulary: string | null;
   createdAt: string;
   updatedAt: string;
   viewerRole?: 'owner' | 'player';
@@ -49,6 +50,11 @@ export default function CampaignDetailsPage() {
     text: '',
   });
 
+  const [editingVocab, setEditingVocab] = useState<EditingState>({
+    isEditing: false,
+    text: '',
+  });
+
   const { data: campaign, isLoading: campaignLoading } = useQuery<Campaign>({
     queryKey: ['campaign', campaignId],
     queryFn: async () => {
@@ -68,22 +74,25 @@ export default function CampaignDetailsPage() {
     enabled: !!campaignId,
   });
 
-  // Update system prompt mutation
-  const updatePromptMutation = useMutation({
-    mutationFn: async (systemPrompt: string) => {
+  // Update mutation — sends the full campaign so editing one field never wipes
+  // the others. Callers pass only the field(s) they're changing as overrides.
+  const updateCampaignMutation = useMutation({
+    mutationFn: async (overrides: Partial<Pick<Campaign, 'systemPrompt' | 'transcriptionVocabulary'>>) => {
       const response = await fetch(`/api/campaigns/${campaignId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: campaign?.name,
           description: campaign?.description,
-          systemPrompt
+          systemPrompt: campaign?.systemPrompt ?? '',
+          transcriptionVocabulary: campaign?.transcriptionVocabulary ?? '',
+          ...overrides,
         }),
       });
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to update system prompt');
+        throw new Error(error.error || 'Failed to update campaign');
       }
 
       return response.json();
@@ -91,6 +100,7 @@ export default function CampaignDetailsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaign', campaignId] });
       setEditingState({ isEditing: false, text: '' });
+      setEditingVocab({ isEditing: false, text: '' });
     },
   });
 
@@ -151,11 +161,26 @@ export default function CampaignDetailsPage() {
   };
 
   const handleSavePrompt = () => {
-    updatePromptMutation.mutate(editingState.text);
+    updateCampaignMutation.mutate({ systemPrompt: editingState.text });
   };
 
   const handleCancelEdit = () => {
     setEditingState({ isEditing: false, text: '' });
+  };
+
+  const handleEditVocab = () => {
+    setEditingVocab({
+      isEditing: true,
+      text: campaign?.transcriptionVocabulary || '',
+    });
+  };
+
+  const handleSaveVocab = () => {
+    updateCampaignMutation.mutate({ transcriptionVocabulary: editingVocab.text });
+  };
+
+  const handleCancelVocab = () => {
+    setEditingVocab({ isEditing: false, text: '' });
   };
 
   const handleDeleteSession = async (sessionId: string, sessionTitle: string, e: React.MouseEvent) => {
@@ -348,17 +373,17 @@ export default function CampaignDetailsPage() {
                   <Button
                     size="sm"
                     onClick={handleSavePrompt}
-                    disabled={updatePromptMutation.isPending}
+                    disabled={updateCampaignMutation.isPending}
                     className="flex items-center space-x-1 flex-1"
                   >
                     <Save className="h-3 w-3" />
-                    <span>{updatePromptMutation.isPending ? 'Saving...' : 'Save'}</span>
+                    <span>{updateCampaignMutation.isPending ? 'Saving...' : 'Save'}</span>
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleCancelEdit}
-                    disabled={updatePromptMutation.isPending}
+                    disabled={updateCampaignMutation.isPending}
                     className="flex items-center space-x-1"
                   >
                     <X className="h-3 w-3" />
@@ -392,6 +417,89 @@ export default function CampaignDetailsPage() {
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <p className="text-xs text-gray-500">
                       This context is included in AI summary generation for all sessions in this campaign.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Transcription Dictionary Card */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Transcription Dictionary</h2>
+              {!editingVocab.isEditing && isOwner && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEditVocab}
+                  className="flex items-center space-x-1"
+                >
+                  <Edit3 className="h-3 w-3" />
+                  <span>Edit</span>
+                </Button>
+              )}
+            </div>
+
+            {editingVocab.isEditing ? (
+              <div className="space-y-4">
+                <textarea
+                  value={editingVocab.text}
+                  onChange={(e) => setEditingVocab((prev) => ({ ...prev, text: e.target.value }))}
+                  className="w-full h-64 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  placeholder={'NPC names, places, and special terms — one per line.\n\nJabarquious\nMournhold\nLord Vexil'}
+                />
+                <p className="text-xs text-gray-500">
+                  The transcriber uses these exact spellings instead of guessing. One term per line (or comma-separated).
+                </p>
+                <div className="flex space-x-2">
+                  <Button
+                    size="sm"
+                    onClick={handleSaveVocab}
+                    disabled={updateCampaignMutation.isPending}
+                    className="flex items-center space-x-1 flex-1"
+                  >
+                    <Save className="h-3 w-3" />
+                    <span>{updateCampaignMutation.isPending ? 'Saving...' : 'Save'}</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelVocab}
+                    disabled={updateCampaignMutation.isPending}
+                    className="flex items-center space-x-1"
+                  >
+                    <X className="h-3 w-3" />
+                    <span>Cancel</span>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {campaign.transcriptionVocabulary ? (
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+                    <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
+                      {campaign.transcriptionVocabulary}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <FileText className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-500 text-sm mb-3">No dictionary terms set</p>
+                    <p className="text-xs text-gray-400 mb-4">
+                      Add NPC names and special terms so the transcriber spells them correctly
+                    </p>
+                    {isOwner && (
+                      <Button size="sm" onClick={handleEditVocab}>
+                        Add Terms
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {campaign.transcriptionVocabulary && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-500">
+                      These spellings are applied when transcribing every session in this campaign.
                     </p>
                   </div>
                 )}

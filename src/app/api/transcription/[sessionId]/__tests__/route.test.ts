@@ -76,6 +76,7 @@ beforeEach(() => {
 
   Object.assign(db as unknown as Record<string, unknown>, {
     getSessionById: vi.fn(async () => session),
+    getCampaignById: vi.fn(async () => null),
     getTranscriptions: vi.fn(async () => []),
     startProcessing: vi.fn(async () => {}),
     updateSession: vi.fn(async () => {}),

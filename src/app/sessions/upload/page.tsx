@@ -57,6 +57,7 @@ interface CampaignFormState {
   name: string;
   description: string;
   systemPrompt: string;
+  transcriptionVocabulary: string;
 }
 
 interface UploadState {
@@ -96,7 +97,7 @@ function SessionUploadPageContent() {
 
   const [modalState, setModalState] = useState<ModalState>({
     showCreateCampaign: false,
-    campaignForm: { name: '', description: '', systemPrompt: '' },
+    campaignForm: { name: '', description: '', systemPrompt: '', transcriptionVocabulary: '' },
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -233,7 +234,7 @@ function SessionUploadPageContent() {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       setModalState({
         showCreateCampaign: false,
-        campaignForm: { name: '', description: '', systemPrompt: '' },
+        campaignForm: { name: '', description: '', systemPrompt: '', transcriptionVocabulary: '' },
       });
       // Automatically select the newly created campaign
       setFormState((prev) => ({ ...prev, campaignId: newCampaign.id }));
@@ -258,7 +259,7 @@ function SessionUploadPageContent() {
   const openCreateCampaignModal = () => {
     setModalState({
       showCreateCampaign: true,
-      campaignForm: { name: '', description: '', systemPrompt: '' },
+      campaignForm: { name: '', description: '', systemPrompt: '', transcriptionVocabulary: '' },
     });
   };
 
@@ -802,6 +803,24 @@ function SessionUploadPageContent() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   This information helps the AI generate more accurate and contextual summaries for your sessions.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Transcription Dictionary (Optional)
+                </label>
+                <textarea
+                  value={modalState.campaignForm.transcriptionVocabulary}
+                  onChange={(e) => setModalState((prev) => ({
+                    ...prev,
+                    campaignForm: { ...prev.campaignForm, transcriptionVocabulary: e.target.value },
+                  }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  rows={4}
+                  placeholder="NPC names, places, and special terms — one per line (e.g. Jabarquious, Mournhold)"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  The transcriber uses these exact spellings instead of guessing at unfamiliar names.
                 </p>
               </div>
               <div className="flex space-x-3 pt-2">

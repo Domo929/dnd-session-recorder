@@ -8,6 +8,7 @@ const createCampaignSchema = z.object({
   name: z.string().min(1, 'Campaign name is required'),
   description: z.string().optional(),
   systemPrompt: z.string().optional(),
+  transcriptionVocabulary: z.string().optional(),
 });
 
 export async function GET() {
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
       name: validatedData.name,
       description: validatedData.description,
       systemPrompt: validatedData.systemPrompt,
+      transcriptionVocabulary: validatedData.transcriptionVocabulary,
       userId: user.id,
     });
 
