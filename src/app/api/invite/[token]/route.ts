@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { requireAuth } from '@/lib/auth-utils';
 import { prisma } from '@/lib/prisma';
 import { hashInviteToken } from '@/lib/inviteTokens';
 
@@ -31,10 +30,8 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { error: authError, user } = await requireAuth();
+  if (authError) return authError;
 
   const link = await lookupLink(token);
   if (!link) {
@@ -45,7 +42,7 @@ export async function GET(
     where: {
       campaignId_userId: {
         campaignId: link.campaignId,
-        userId: session.user.id,
+        userId: user.id,
       },
     },
     select: { role: true },
@@ -71,10 +68,8 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { error: authError, user } = await requireAuth();
+  if (authError) return authError;
 
   const link = await lookupLink(token);
   if (!link) {
@@ -85,7 +80,7 @@ export async function POST(
     where: {
       campaignId_userId: {
         campaignId: link.campaignId,
-        userId: session.user.id,
+        userId: user.id,
       },
     },
   });
@@ -100,7 +95,7 @@ export async function POST(
   await prisma.member.create({
     data: {
       campaignId: link.campaignId,
-      userId: session.user.id,
+      userId: user.id,
       role: 'player',
       invitedBy: link.createdBy,
     },

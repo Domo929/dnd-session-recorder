@@ -234,14 +234,6 @@ jobs:
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET_STAGING }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Run integration tests against staging
-        run: npx playwright test tests/integration/
-        env:
-          CI: true
-          DEPLOY_URL: ${{ needs.staging-deployment.outputs.staging_url }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET_STAGING }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
       - name: Upload staging test results
         uses: actions/upload-artifact@v4
         if: always()

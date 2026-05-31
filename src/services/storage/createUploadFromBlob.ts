@@ -34,7 +34,7 @@ export interface CompleteUploadInput {
  *  4. Materialize → ffprobe duration → drop the temp file.
  *  5. Insert the `Upload` row (storage='blob').
  *
- * On a probe failure the orphan blob is deleted before throwing.
+ * On a size mismatch or probe failure the orphan blob is deleted before throwing.
  */
 export async function createUploadFromBlob(userId: string, input: CompleteUploadInput) {
   const { blobPath, originalName, mimetype, size } = input;
@@ -54,6 +54,8 @@ export async function createUploadFromBlob(userId: string, input: CompleteUpload
   }
 
   if (realSize !== size) {
+    logger.warn('Uploaded size mismatch; deleting orphan blob', { blobPath, userId, realSize, size });
+    await storage.delete(blobPath).catch(() => {});
     throw new UploadCompletionError(
       422,
       `Uploaded size (${realSize}) does not match the declared size (${size}).`,
