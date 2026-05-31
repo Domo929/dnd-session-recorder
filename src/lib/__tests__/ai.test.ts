@@ -70,6 +70,48 @@ describe('ai service wrapper (mock mode)', () => {
       expect(out).toHaveLength(3);
     });
   });
+
+  describe('buildChatMessages', () => {
+    it('prepends a system message containing the context and keeps history order', async () => {
+      const { buildChatMessages } = await import('@/lib/ai');
+      const history = [
+        { role: 'user' as const, content: 'Who is the villain?' },
+        { role: 'assistant' as const, content: 'Let me check.' },
+        { role: 'user' as const, content: 'Any update?' },
+      ];
+      const messages = buildChatMessages('CTX-MARKER', history);
+
+      expect(messages[0].role).toBe('system');
+      expect(messages[0].content).toContain('CTX-MARKER');
+      expect(messages.slice(1)).toEqual(history);
+    });
+  });
+
+  describe('streamCampaignChat (mock mode)', () => {
+    it('streams a deterministic answer echoing a citation tag from the context', async () => {
+      const { buildChatMessages, streamCampaignChat } = await import('@/lib/ai');
+      const context = '[Session "Goblin Ambush" @ 0:01:23, Alice]\nThe party fought goblins.';
+      const messages = buildChatMessages(context, [
+        { role: 'user', content: 'What happened with the goblins?' },
+      ]);
+
+      const res = streamCampaignChat(messages).toTextStreamResponse();
+      const text = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(text).toContain('[Session "Goblin Ambush" @ 0:01:23, Alice]');
+    });
+
+    it('says it could not find an answer when the context has no citations', async () => {
+      const { buildChatMessages, streamCampaignChat } = await import('@/lib/ai');
+      const messages = buildChatMessages('', [
+        { role: 'user', content: 'Who is the king?' },
+      ]);
+
+      const text = await streamCampaignChat(messages).toTextStreamResponse().text();
+      expect(text.toLowerCase()).toContain('could not find');
+    });
+  });
 });
 
 describe('transcription provider selection (maxTranscriptionChunkSizeMB)', () => {

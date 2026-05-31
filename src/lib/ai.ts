@@ -337,9 +337,45 @@ export function buildChatMessages(
   ];
 }
 
-export function streamCampaignChat(messages: CoreMessage[]) {
+export function streamCampaignChat(messages: CoreMessage[]): CampaignChatStream {
+  if (isAiMocked()) {
+    return mockCampaignChatStream(messages);
+  }
   const modelId = process.env.GOOGLE_SUMMARY_MODEL || 'gemini-2.5-flash';
   return streamText({ model: google(modelId), messages });
+}
+
+/**
+ * Minimal surface the chat route relies on. `streamText`'s result satisfies it,
+ * and the mock branch returns an equivalent lightweight implementation so the
+ * RAG chat endpoint is exercisable under `MOCK_AI_SERVICES=true` without keys.
+ */
+export interface CampaignChatStream {
+  toTextStreamResponse(): Response;
+}
+
+function mockCampaignChatStream(messages: CoreMessage[]): CampaignChatStream {
+  const system = messages.find((m) => m.role === 'system');
+  const context = typeof system?.content === 'string' ? system.content : '';
+  const citation = context.match(/\[Session [^\]]*\]/)?.[0];
+  const answer = citation
+    ? `Based on the campaign records, here is what I found. ${citation}`
+    : 'I could not find that in the campaign records.';
+
+  return {
+    toTextStreamResponse() {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(answer));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    },
+  };
 }
 
 function summaryModel(): LanguageModel {
