@@ -81,8 +81,11 @@ export class TestDatabase {
       // Generate Prisma client (doesn't need DATABASE_URL)
       await execAsync('npx prisma generate');
 
-      // Deploy migrations (needs DATABASE_URL)
-      await execAsync('npx prisma db push', {
+      // Deploy migrations (needs DATABASE_URL). Use migrate deploy rather than
+      // db push so raw-SQL migration objects (the vector extension, the
+      // generated text_search column, and the HNSW/GIN indexes used by
+      // campaign search + chat) are created. db push only reflects schema.prisma.
+      await execAsync('npx prisma migrate deploy', {
         env: { ...process.env, DATABASE_URL: this.connectionString }
       });
     } catch (error) {
