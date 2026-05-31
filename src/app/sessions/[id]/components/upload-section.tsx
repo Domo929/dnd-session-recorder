@@ -198,7 +198,7 @@ export function UploadSection({ sessionId }: UploadSectionProps) {
                                 <span>
                                   {(upload.size / 1024 / 1024).toFixed(2)} MB
                                 </span>
-                                {upload.duration && (
+                                {upload.duration != null && (
                                   <span>
                                     · {Math.floor(upload.duration / 60)}m{' '}
                                     {upload.duration % 60}s

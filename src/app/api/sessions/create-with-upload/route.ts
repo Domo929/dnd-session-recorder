@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth-utils';
 import { getCampaignAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { createUploadFromBlob, UploadCompletionError } from '@/services/storage/createUploadFromBlob';
+import { getStorageService } from '@/services/storage';
 import { resolveTranscriptionMode } from '@/lib/transcriptionMode';
 import { logger, getUserContext } from '@/lib/logger';
 
@@ -29,6 +30,7 @@ interface CreateWithUploadRequest {
  */
 export async function POST(request: NextRequest) {
   let createdSessionId: string | null = null;
+  let orphanUpload: { id: string; path: string } | null = null;
 
   try {
     const { error, user } = await requireAuth();
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest) {
       const upload = await createUploadFromBlob(user.id, { blobPath, originalName, mimetype, size });
       uploadId = upload.id;
       duration = upload.duration ?? undefined;
+      orphanUpload = { id: upload.id, path: upload.path };
       logger.info('Upload record created for session creation', { uploadId, userId: user.id });
     }
 
@@ -95,6 +98,7 @@ export async function POST(request: NextRequest) {
     });
 
     createdSessionId = session.id;
+    orphanUpload = null;
     logger.info('Session created', {
       sessionId: session.id,
       campaignId,
@@ -142,6 +146,22 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    // Roll back an orphaned Upload (+ its blob) if session creation failed
+    // after the upload row was minted. Best-effort; failures are logged only.
+    if (orphanUpload) {
+      const { id, path } = orphanUpload;
+      await getStorageService().delete(path).catch((err) => {
+        logger.error('Failed to delete orphaned blob after session creation failure', err as Error, {
+          uploadId: id,
+        });
+      });
+      await db.deleteUpload(id).catch((err) => {
+        logger.error('Failed to delete orphaned upload after session creation failure', err as Error, {
+          uploadId: id,
+        });
+      });
+    }
+
     if (error instanceof UploadCompletionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

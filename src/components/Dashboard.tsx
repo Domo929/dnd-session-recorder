@@ -68,7 +68,7 @@ export default function Dashboard() {
   };
 
   const formatDuration = (seconds: number | null) => {
-    if (!seconds) return 'N/A';
+    if (seconds == null) return 'N/A';
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${minutes}m`;
