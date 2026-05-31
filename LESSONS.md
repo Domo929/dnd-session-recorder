@@ -99,3 +99,6 @@ When you wire a test runner to CI for the first time, expect to find dead tests 
 
 ### Generate Prisma with local CLI, not npx latest
 If `node_modules` is missing, `npm run db:generate` may make `npx prisma generate` prompt to install the latest Prisma (e.g. v7), which can fail against this Prisma 6 schema. Run `npm install` first so the script uses the repo-pinned Prisma CLI.
+
+### Vitest does not support Jest's `--runInBand`
+Use plain `npm run test:unit -- path/to/test.ts` or Vitest-native concurrency flags. Passing `--runInBand` makes Vitest fail before running tests.
