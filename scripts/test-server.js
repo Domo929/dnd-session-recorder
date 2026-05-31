@@ -19,7 +19,7 @@ async function startTestServer() {
     console.log('🐘 Starting PostgreSQL testcontainer for CI...');
     
     try {
-      const container = await new PostgreSqlContainer('postgres:16-alpine')
+      const container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
         .withDatabase('dnd_recorder_test')
         .withUsername('test_user')
         .withPassword('test_password')

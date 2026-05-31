@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # PostgreSQL Database for Development
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: dnd-recorder-postgres
     restart: unless-stopped
     environment:

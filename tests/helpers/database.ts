@@ -32,7 +32,7 @@ export class TestDatabase {
 
     console.log('🐘 Starting PostgreSQL testcontainer...');
     
-    this.container = await new PostgreSqlContainer('postgres:16-alpine')
+    this.container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
       .withDatabase('dnd_recorder_test')
       .withUsername('test_user')
       .withPassword('test_password')
