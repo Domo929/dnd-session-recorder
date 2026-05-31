@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
 import { db } from '@/services/database';
+import { getStorageService } from '@/services/storage';
 import { unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { logger } from '@/lib/logger';
@@ -136,11 +137,25 @@ export async function DELETE(
       userId: user.id
     });
 
-    // Delete the main file from filesystem
+    // Delete the main file from its backing store
     let filesDeleted = 0;
     let filesFailedToDelete = 0;
 
-    if (existsSync(upload.path)) {
+    if (upload.storage === 'blob') {
+      // Blob-backed uploads: `path` is the blob key, not a local file. Deleting
+      // it from disk would leave the blob orphaned in Azure forever.
+      try {
+        await getStorageService().delete(upload.path);
+        filesDeleted++;
+        logger.debug('Deleted main blob', { path: upload.path, uploadId: id });
+      } catch (blobError) {
+        filesFailedToDelete++;
+        logger.error('Failed to delete main blob', blobError as Error, {
+          path: upload.path,
+          uploadId: id,
+        });
+      }
+    } else if (existsSync(upload.path)) {
       try {
         await unlink(upload.path);
         filesDeleted++;
@@ -156,7 +171,8 @@ export async function DELETE(
       logger.warn('Main file not found', { path: upload.path, uploadId: id });
     }
 
-    // Delete chunk files if they exist
+    // Delete chunk files if they exist. Chunking only ever writes to local disk,
+    // so these are always local paths regardless of the main file's backend.
     if (upload.chunkPaths) {
       try {
         const chunkPaths = JSON.parse(upload.chunkPaths);
