@@ -25,6 +25,9 @@ A broken type in a `.test.ts` fails typecheck even if no runner uses it. Test mo
 ### Wiring a Vitest test that imports `src/`
 The CI job needs `npx prisma generate` before `npm run test:unit` if any imported module transitively touches `@/lib/prisma`. `@prisma/client` types come from generated code.
 
+### Vitest cannot directly import `.tsx` components with current JSX config
+The repo's `tsconfig.json` uses `"jsx": "preserve"`, so Vitest/Vite import analysis can fail on component JSX. Extract pure helpers to `.ts` files for unit tests unless the Vitest config is updated to transform JSX.
+
 ### Porting a Playwright pure-logic test to Vitest
 1. Rename `.spec.ts` → `.test.ts`.
 2. `import { test, expect } from '@playwright/test'` → `import { describe, it, expect } from 'vitest'`.

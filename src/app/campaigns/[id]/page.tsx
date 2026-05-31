@@ -9,6 +9,8 @@ import Button from '@/components/ui/Button';
 import MembersCard from '@/components/MembersCard';
 import InviteLinkCard from '@/components/InviteLinkCard';
 import VoiceLibraryCard from '@/components/VoiceLibraryCard';
+import CampaignSearchCard from '@/components/CampaignSearchCard';
+import CampaignChatCard from '@/components/CampaignChatCard';
 import { logger } from '@/lib/logger';
 
 interface Campaign {
@@ -507,6 +509,8 @@ export default function CampaignDetailsPage() {
             )}
           </div>
 
+          <CampaignSearchCard campaignId={campaignId} />
+          <CampaignChatCard campaignId={campaignId} isOwner={isOwner} />
           <MembersCard campaignId={campaignId} />
           <VoiceLibraryCard campaignId={campaignId} />
           {isOwner && <InviteLinkCard campaignId={campaignId} />}
