@@ -16,3 +16,19 @@ export function formatSearchTimestamp(seconds: number) {
 export function getSourceTypeLabel(sourceType: CampaignSearchSourceType) {
   return sourceType === 'dm_todo' ? 'DM TODO' : sourceType;
 }
+
+export function getSafeSearchSnippetHtml(snippet: string) {
+  const startMarkToken = '%%SEARCH_MARK_START%%';
+  const endMarkToken = '%%SEARCH_MARK_END%%';
+
+  return snippet
+    .replaceAll('<mark>', startMarkToken)
+    .replaceAll('</mark>', endMarkToken)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll(startMarkToken, '<mark>')
+    .replaceAll(endMarkToken, '</mark>');
+}

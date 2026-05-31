@@ -7,6 +7,7 @@ import { Clock, Loader2, Search } from 'lucide-react';
 import {
   CampaignSearchSourceType,
   formatSearchTimestamp,
+  getSafeSearchSnippetHtml,
   getSourceTypeLabel,
 } from './campaignSearchHelpers';
 
@@ -119,8 +120,8 @@ export default function CampaignSearchCard({ campaignId }: { campaignId: string 
                 </div>
                 <p
                   className="text-sm text-gray-700 leading-relaxed [&_mark]:bg-yellow-200 [&_mark]:rounded-sm [&_mark]:px-0.5"
-                  // Server-generated ts_headline output only includes our <mark> highlights.
-                  dangerouslySetInnerHTML={{ __html: result.snippet }}
+                  // Preserve server-generated <mark> highlights while escaping snippet text.
+                  dangerouslySetInnerHTML={{ __html: getSafeSearchSnippetHtml(result.snippet) }}
                 />
               </Link>
             </li>
