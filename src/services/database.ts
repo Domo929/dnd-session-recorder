@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma';
 import { Prisma, Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster, SessionNpcSuggestion } from '@prisma/client';
-import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
+import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, matchCluster, selectExemplarsToEvict, shouldLearn, type VoiceFingerprint } from '@/lib/voiceFingerprint';
 import { getRetentionConfig } from '@/lib/retention';
 
 export interface CreateCampaignData {
@@ -756,6 +756,27 @@ export class DatabaseService {
     return job;
   }
 
+  /**
+   * On-demand diarization for a basic-mode session: flip it to speaker-labeled
+   * and queue a job in one transaction. Unlike the post-transcription auto path
+   * (`maybeEnqueueDiarization`) this does not require enrolled voices — an
+   * all-unknown result is still useful (the DM can tag clusters to seed the
+   * voice library). The status flip is conditional (claim-on-update) so two
+   * racing requests can't both enqueue a (billed) job; returns null when a run
+   * is already queued/running.
+   */
+  async createOnDemandDiarizationJob(sessionId: string): Promise<DiarizationJob | null> {
+    const hmacSecret = randomBytes(32).toString('hex');
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.gamingSession.updateMany({
+        where: { id: sessionId, diarizationStatus: { notIn: ['queued', 'running'] } },
+        data: { transcriptionMode: 'speaker_labeled', diarizationStatus: 'queued' },
+      });
+      if (claimed.count === 0) return null;
+      return tx.diarizationJob.create({ data: { sessionId, status: 'queued', hmacSecret } });
+    });
+  }
+
   async getDiarizationJobById(
     jobId: string,
   ): Promise<(DiarizationJob & { session: GamingSession }) | null> {
@@ -1163,6 +1184,7 @@ export class DatabaseService {
     clusterId: string,
     voiceSampleId: string,
     sessionId: string,
+    useForTraining: boolean = true,
   ): Promise<void> {
     const voice = await prisma.voiceSample.findUnique({
       where: { id: voiceSampleId },
@@ -1183,16 +1205,21 @@ export class DatabaseService {
       });
       if (claimed.count === 0) throw new ClusterAlreadyTaggedError(clusterId);
 
-      await this.addLearnedExemplarTx(tx, {
-        voiceSampleId,
-        embedding: Buffer.from(cluster.embeddingCentroid),
-        embeddingModel: 'ecapa-tdnn-v1',
-        source: 'dm_confirmed',
-        sourceSessionId: sessionId,
-        similarityAtCapture: cluster.matchedScore,
-        durationMs: cluster.totalDurationMs,
-        maxExemplars: getFingerprintConfig().maxExemplars,
-      });
+      // The DM-confirmed exemplar refines the voice fingerprint. Skipping it
+      // (useForTraining=false) still labels the cluster but keeps a noisy/short
+      // snippet out of the fingerprint.
+      if (useForTraining) {
+        await this.addLearnedExemplarTx(tx, {
+          voiceSampleId,
+          embedding: Buffer.from(cluster.embeddingCentroid),
+          embeddingModel: 'ecapa-tdnn-v1',
+          source: 'dm_confirmed',
+          sourceSessionId: sessionId,
+          similarityAtCapture: cluster.matchedScore,
+          durationMs: cluster.totalDurationMs,
+          maxExemplars: getFingerprintConfig().maxExemplars,
+        });
+      }
       await tx.gamingSession.update({
         where: { id: sessionId },
         data: { needsResummarize: true },
@@ -1281,6 +1308,90 @@ export class DatabaseService {
 
       return { voiceSampleId: sample.id, affectedSessionIds: [...affected] };
     });
+  }
+
+  /**
+   * Re-run voice matching for this session's still-unknown clusters against the
+   * campaign's current fingerprints (seed + learned exemplars). High-confidence
+   * matches are auto-linked (claim-on-update so a concurrent tag can't be
+   * clobbered) and, when the match clears the learn gate, folded back as an
+   * `auto_matched` exemplar. Affected sessions are flagged for re-summarization.
+   * Idempotent: already-linked clusters are skipped and exemplar writes upsert
+   * on `[voiceSampleId, sourceSessionId]`. Returns the linked clusters.
+   */
+  async rematchSessionClusters(
+    sessionId: string,
+    campaignId: string,
+  ): Promise<{ linked: { clusterId: string; displayLabel: string; matchedScore: number }[] }> {
+    const fingerprints = await this.getCampaignFingerprints(campaignId);
+    const linked: { clusterId: string; displayLabel: string; matchedScore: number }[] = [];
+    if (fingerprints.length === 0) return { linked };
+
+    const config = getFingerprintConfig();
+    const clusters = await prisma.sessionSpeakerCluster.findMany({
+      where: { sessionId, voiceSampleId: null },
+      select: { id: true, embeddingCentroid: true, totalDurationMs: true },
+    });
+
+    for (const cluster of clusters) {
+      const centroid = deserializeEmbedding(Buffer.from(cluster.embeddingCentroid));
+      const match = matchCluster(centroid, fingerprints, config);
+      // Only auto-link confident matches; low-confidence stays unknown for review.
+      if (match.kind !== 'matched' || match.matchConfidence !== 'high') continue;
+
+      await prisma.$transaction(async (tx) => {
+        const claimed = await tx.sessionSpeakerCluster.updateMany({
+          where: { id: cluster.id, voiceSampleId: null },
+          data: {
+            voiceSampleId: match.voiceSampleId,
+            displayLabel: match.displayLabel,
+            matchConfidence: 'high',
+            matchedScore: match.matchedScore,
+          },
+        });
+        if (claimed.count === 0) return; // lost a concurrent tag race; skip.
+
+        if (shouldLearn(match, false, config)) {
+          // Don't let an auto-match downgrade a DM-confirmed exemplar already
+          // captured for this voice in this session (exemplars are unique on
+          // [voiceSampleId, sourceSessionId]).
+          const existing = await tx.voiceExemplar.findUnique({
+            where: {
+              voiceSampleId_sourceSessionId: {
+                voiceSampleId: match.voiceSampleId,
+                sourceSessionId: sessionId,
+              },
+            },
+            select: { source: true },
+          });
+          if (existing?.source !== 'dm_confirmed') {
+            await this.addLearnedExemplarTx(tx, {
+              voiceSampleId: match.voiceSampleId,
+              embedding: Buffer.from(cluster.embeddingCentroid),
+              embeddingModel: 'ecapa-tdnn-v1',
+              source: 'auto_matched',
+              sourceSessionId: sessionId,
+              similarityAtCapture: match.matchedScore,
+              durationMs: cluster.totalDurationMs,
+              maxExemplars: config.maxExemplars,
+            });
+          }
+        }
+        linked.push({
+          clusterId: cluster.id,
+          displayLabel: match.displayLabel,
+          matchedScore: match.matchedScore,
+        });
+      });
+    }
+
+    if (linked.length > 0) {
+      await prisma.gamingSession.update({
+        where: { id: sessionId },
+        data: { needsResummarize: true },
+      });
+    }
+    return { linked };
   }
 
   /** Insert NPC suggestions, skipping clusters that already have one. */
