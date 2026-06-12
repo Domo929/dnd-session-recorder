@@ -192,6 +192,21 @@ git commit -m "fix(<area>): <generic description>"
 
 Verify the diff contains nothing fork-specific **before** pushing (see 2.3).
 
+> ⚠️ **If your change adds a dependency, regenerate the lockfile with upstream's
+> Node version.** Upstream CI runs `npm ci`, which fails (`EUSAGE … package-lock
+> out of sync`) if `package.json` and `package-lock.json` disagree. Optional
+> native deps (e.g. `isomorphic-dompurify` → jsdom → canvas → `@emnapi/*`) resolve
+> differently across Node majors, so a lockfile generated on the wrong Node will
+> be rejected. Upstream uses **Node 22** (`.github/workflows/*` `NODE_VERSION`).
+> Reproduce/verify the exact CI step locally before pushing:
+>
+> ```bash
+> nvm use 22                                   # match upstream CI's Node
+> git checkout upstream/staging -- package-lock.json   # start from upstream's lock
+> npm install <new-dep>                         # add only your dep to the lock
+> rm -rf node_modules && npm ci                 # MUST pass — this is what CI runs
+> ```
+
 ### 2.2 Branch naming + creating the PR
 
 - **Branch names:** conventional-commit style, scoped, no fork/infra words:

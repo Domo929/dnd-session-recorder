@@ -122,3 +122,10 @@ If `node_modules` is missing, `npm run db:generate` may make `npx prisma generat
 
 ### Vitest does not support Jest's `--runInBand`
 Use plain `npm run test:unit -- path/to/test.ts` or Vitest-native concurrency flags. Passing `--runInBand` makes Vitest fail before running tests.
+
+### Regenerate lockfiles with the target repo's Node version
+When adding a dependency for a PR (especially an upstream PR), generate `package-lock.json` with the **Node version the target CI uses** (upstream + this repo use Node 22), then verify with `rm -rf node_modules && npm ci` — that's exactly what CI runs.
+- **Why:** a markdown-XSS PR to upstream added `isomorphic-dompurify` (→ jsdom → canvas → `@emnapi/*` optional native deps). The lockfile was generated with Node 24/npm 11; upstream CI (Node 22) rejected it with `npm error code EUSAGE … package-lock out of sync … @emnapi/wasi-threads@1.2.1 does not satisfy 1.2.2`. Optional native deps resolve differently across Node majors. Regenerating with Node 22 fixed it.
+
+### Cross-fork PRs always show two red checks (not your bug)
+On PRs opened from a fork to `kbrakke/*`, `PR Status Comment` fails with `403 Resource not accessible by integration` (fork PRs run with a read-only `GITHUB_TOKEN`) and `review_app` fails (no Fly deploy secrets). These are expected for any external contribution — judge fork PRs by the substantive checks (build/lint/typecheck/unit/integration/security), not those two.
