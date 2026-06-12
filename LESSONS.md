@@ -25,6 +25,9 @@ A broken type in a `.test.ts` fails typecheck even if no runner uses it. Test mo
 ### Wiring a Vitest test that imports `src/`
 The CI job needs `npx prisma generate` before `npm run test:unit` if any imported module transitively touches `@/lib/prisma`. `@prisma/client` types come from generated code.
 
+### Vitest cannot directly import `.tsx` components with current JSX config
+The repo's `tsconfig.json` uses `"jsx": "preserve"`, so Vitest/Vite import analysis can fail on component JSX. Extract pure helpers to `.ts` files for unit tests unless the Vitest config is updated to transform JSX.
+
 ### Porting a Playwright pure-logic test to Vitest
 1. Rename `.spec.ts` → `.test.ts`.
 2. `import { test, expect } from '@playwright/test'` → `import { describe, it, expect } from 'vitest'`.
@@ -113,3 +116,9 @@ When you wire a test runner to CI for the first time, expect to find dead tests 
 - Wants test stages clearly separated with little overlap.
 - Prefers testcontainers + mocked AI for PR-level tests.
 - Goes step-by-step on multi-step plans rather than bundling. Wait for the green light before proceeding.
+
+### Generate Prisma with local CLI, not npx latest
+If `node_modules` is missing, `npm run db:generate` may make `npx prisma generate` prompt to install the latest Prisma (e.g. v7), which can fail against this Prisma 6 schema. Run `npm install` first so the script uses the repo-pinned Prisma CLI.
+
+### Vitest does not support Jest's `--runInBand`
+Use plain `npm run test:unit -- path/to/test.ts` or Vitest-native concurrency flags. Passing `--runInBand` makes Vitest fail before running tests.

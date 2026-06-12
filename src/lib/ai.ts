@@ -4,8 +4,11 @@ import path from 'path';
 import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
 import {
+  embedMany,
   generateText,
+  streamText,
   experimental_transcribe as transcribe,
+  type CoreMessage,
   type LanguageModel,
 } from 'ai';
 import {
@@ -364,6 +367,89 @@ function summaryModelId(provider: SummaryProvider): string {
   return provider === 'google'
     ? process.env.GOOGLE_SUMMARY_MODEL || 'gemini-2.5-flash'
     : process.env.OPENAI_SUMMARY_MODEL || 'gpt-4o';
+}
+
+const EMBEDDING_DIM = 768;
+
+function mockEmbedding(text: string): number[] {
+  // Deterministic pseudo-vector from a simple rolling hash. Mock-only.
+  const v = new Array<number>(EMBEDDING_DIM);
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h = (h ^ text.charCodeAt(i)) * 16777619;
+  }
+  for (let i = 0; i < EMBEDDING_DIM; i++) {
+    h = (h * 48271) % 2147483647;
+    v[i] = (h % 1000) / 1000;
+  }
+  return v;
+}
+
+export async function embedTexts(texts: string[]): Promise<number[][]> {
+  if (isAiMocked()) return texts.map(mockEmbedding);
+  const modelId = process.env.GOOGLE_EMBEDDING_MODEL || 'text-embedding-004';
+  const { embeddings } = await embedMany({
+    model: google.textEmbeddingModel(modelId),
+    values: texts,
+  });
+  return embeddings;
+}
+
+const CHAT_SYSTEM_PROMPT =
+  'You are a helpful assistant answering questions about a Dungeons & Dragons campaign. ' +
+  'Answer ONLY using the provided context excerpts. If the context does not contain the ' +
+  'answer, say you could not find it in the campaign records. When you use an excerpt, cite ' +
+  'it inline using its bracketed citation tag exactly as given.';
+
+export function buildChatMessages(
+  context: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): CoreMessage[] {
+  return [
+    { role: 'system', content: `${CHAT_SYSTEM_PROMPT}\n\nContext:\n${context}` },
+    ...history,
+  ];
+}
+
+export function streamCampaignChat(messages: CoreMessage[]): CampaignChatStream {
+  if (isAiMocked()) {
+    return mockCampaignChatStream(messages);
+  }
+  const modelId = process.env.GOOGLE_SUMMARY_MODEL || 'gemini-2.5-flash';
+  return streamText({ model: google(modelId), messages });
+}
+
+/**
+ * Minimal surface the chat route relies on. `streamText`'s result satisfies it,
+ * and the mock branch returns an equivalent lightweight implementation so the
+ * RAG chat endpoint is exercisable under `MOCK_AI_SERVICES=true` without keys.
+ */
+export interface CampaignChatStream {
+  toTextStreamResponse(): Response;
+}
+
+function mockCampaignChatStream(messages: CoreMessage[]): CampaignChatStream {
+  const system = messages.find((m) => m.role === 'system');
+  const context = typeof system?.content === 'string' ? system.content : '';
+  const citation = context.match(/\[Session [^\]]*\]/)?.[0];
+  const answer = citation
+    ? `Based on the campaign records, here is what I found. ${citation}`
+    : 'I could not find that in the campaign records.';
+
+  return {
+    toTextStreamResponse() {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(answer));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    },
+  };
 }
 
 function summaryModel(): LanguageModel {

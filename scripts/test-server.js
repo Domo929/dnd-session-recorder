@@ -19,7 +19,7 @@ async function startTestServer() {
     console.log('🐘 Starting PostgreSQL testcontainer for CI...');
     
     try {
-      const container = await new PostgreSqlContainer('postgres:16-alpine')
+      const container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
         .withDatabase('dnd_recorder_test')
         .withUsername('test_user')
         .withPassword('test_password')
@@ -41,8 +41,11 @@ async function startTestServer() {
         stdio: 'inherit'
       });
 
-      // Push schema to database (needs DATABASE_URL)
-      execSync('npx prisma db push --skip-generate', {
+      // Push schema to database (needs DATABASE_URL). Use migrate deploy rather
+      // than db push so raw-SQL migration objects (the vector extension, the
+      // generated text_search column, and the HNSW/GIN indexes used by
+      // campaign search + chat) are created. db push only reflects schema.prisma.
+      execSync('npx prisma migrate deploy', {
         env: { ...process.env, DATABASE_URL: databaseUrl },
         stdio: 'inherit'
       });

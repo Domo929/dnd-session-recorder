@@ -7,6 +7,7 @@ import { generateAiText, isAiMocked } from '@/lib/ai';
 import { buildSpeakerContext, buildSpeakerSummaryPrompt, type SpeakerContext } from '@/services/speakerContext';
 import { buildTurns, renderTurnsWithNames } from '@/lib/transcriptFormat';
 import { buildNpcInferencePrompt, parseNpcSuggestions } from '@/lib/npcInference';
+import { reindexSession } from '@/services/campaignIndex';
 import { isTestAccount } from '@/lib/whitelist';
 import { logger } from '@/lib/logger';
 
@@ -247,6 +248,14 @@ export async function POST(
     // campaign opted in. Best-effort — never fails the summary.
     if (speakerLabeled && speakerContext) {
       await runNpcInference(sessionId, campaign.npcInferenceEnabled, speakerContext);
+    }
+
+    // Index this session's content for campaign search/chat. Best-effort —
+    // a failure here must never fail summary generation.
+    try {
+      await reindexSession(sessionId);
+    } catch (err) {
+      logger.error('Campaign reindex failed', err as Error, { sessionId });
     }
 
     logger.info('Summary generation completed', { sessionId });
