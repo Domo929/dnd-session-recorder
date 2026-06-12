@@ -36,6 +36,9 @@ const SPEAKER_LABEL = /\b(Speaker\s+[A-Za-z0-9]+)\s*:\s*/g;
 export function parseSpeakerTurns(text: string): SpeakerTurn[] {
   if (!text || !text.trim()) return [];
 
+  // SPEAKER_LABEL is a shared global regex; matchAll seeds its clone from the
+  // current lastIndex, so reset it in case hasSpeakerLabels left it advanced.
+  SPEAKER_LABEL.lastIndex = 0;
   const matches = Array.from(text.matchAll(SPEAKER_LABEL));
   if (matches.length === 0) {
     return [{ speaker: null, text: text.trim() }];
@@ -83,4 +86,72 @@ export function speakerColorIndex(speaker: string | null, paletteSize: number): 
     hash = (hash * 31 + speaker.charCodeAt(i)) % paletteSize;
   }
   return hash;
+}
+
+/** A single relabel-able turn across the whole basic-mode transcript. */
+export interface BasicTurn {
+  /** Stable 0-based position across all transcription rows, in order. */
+  turnIndex: number;
+  /** The original `Speaker N` label, or null for an unattributed lead-in. */
+  speakerKey: string | null;
+  /** The spoken text for this turn. */
+  text: string;
+}
+
+/**
+ * Flatten the basic-mode transcription rows into a single ordered list of
+ * turns with a stable global `turnIndex`. Basic mode is normally one row, but
+ * we iterate defensively over all rows (in array order) and concatenate their
+ * parsed turns so the index space is contiguous and deterministic. The index
+ * is what `SessionSpeakerTurn` overrides key off of, so it must stay stable as
+ * long as the stored transcript text is unchanged.
+ */
+export function buildTurns(rows: ReadonlyArray<{ text: string }>): BasicTurn[] {
+  const turns: BasicTurn[] = [];
+  for (const row of rows) {
+    for (const t of parseSpeakerTurns(row.text)) {
+      turns.push({ turnIndex: turns.length, speakerKey: t.speaker, text: t.text });
+    }
+  }
+  return turns;
+}
+
+/** A speaker-key default name keyed by the original `Speaker N` label. */
+export type SpeakerDefaults = Record<string, string>;
+/** A per-turn override name keyed by `turnIndex`. */
+export type TurnOverrides = Record<number, string>;
+
+/**
+ * Resolve the display name for a turn using the two-layer precedence:
+ *   per-turn override  >  per-speaker-key default  >  the raw speaker key.
+ * Returns null only for unattributed lead-in turns with no override.
+ */
+export function resolveTurnName(
+  turn: BasicTurn,
+  defaults: SpeakerDefaults,
+  overrides: TurnOverrides,
+): string | null {
+  const override = overrides[turn.turnIndex];
+  if (override) return override;
+  if (turn.speakerKey && defaults[turn.speakerKey]) return defaults[turn.speakerKey];
+  return turn.speakerKey;
+}
+
+/**
+ * Render the basic-mode transcript with resolved speaker names applied, one
+ * turn per line (`Name: text`). Used to feed the summary prompt so the AI sees
+ * the relabeled names instead of `Speaker N`. Unattributed turns render as bare
+ * text. Returns an empty string when there are no turns.
+ */
+export function renderTurnsWithNames(
+  turns: ReadonlyArray<BasicTurn>,
+  defaults: SpeakerDefaults,
+  overrides: TurnOverrides,
+): string {
+  return turns
+    .map((turn) => {
+      const name = resolveTurnName(turn, defaults, overrides);
+      return name ? `${name}: ${turn.text}` : turn.text;
+    })
+    .join('\n');
 }

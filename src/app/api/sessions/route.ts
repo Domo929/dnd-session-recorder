@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth-utils';
+import { getCampaignAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { resolveTranscriptionMode } from '@/lib/transcriptionMode';
 import { logger } from '@/lib/logger';
@@ -51,9 +52,11 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validatedData = createSessionSchema.parse(body);
 
-    // Verify campaign exists and belongs to user
+    // Verify campaign exists and the caller is its owner. Membership is the
+    // single source of truth for access (the owner has an 'owner' Member row).
     const campaign = await db.getCampaignById(validatedData.campaign_id);
-    if (!campaign || campaign.userId !== user.id) {
+    const role = await getCampaignAccess(user.id, validatedData.campaign_id);
+    if (!campaign || role !== 'owner') {
       return NextResponse.json(
         { error: 'Campaign not found' },
         { status: 404 }

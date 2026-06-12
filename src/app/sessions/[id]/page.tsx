@@ -233,7 +233,7 @@ function SessionDetailPage() {
                   <SummarySection
                     summary={summary}
                     sessionStatus={session.status}
-                    onSave={(text) => updateSummaryMutation.mutate(text)}
+                    onSave={(text) => updateSummaryMutation.mutateAsync(text)}
                     onRegenerate={() => generateSummaryMutation.mutate()}
                     isSaving={updateSummaryMutation.isPending}
                     isRegenerating={generateSummaryMutation.isPending}
@@ -247,6 +247,7 @@ function SessionDetailPage() {
                   sessionId={sessionId}
                   transcriptions={transcriptions}
                   sessionStatus={session.status}
+                  campaignId={session.campaign.id}
                 />
               )}
 
@@ -254,7 +255,7 @@ function SessionDetailPage() {
                 <DMTodoPanel
                   todoList={dmTodoList}
                   sessionStatus={session.status}
-                  onSave={(text) => updateTodoMutation.mutate(text)}
+                  onSave={(text) => updateTodoMutation.mutateAsync(text)}
                   onRegenerate={() => generateTodoMutation.mutate()}
                   isSaving={updateTodoMutation.isPending}
                   isRegenerating={generateTodoMutation.isPending}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
+import { requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
 import { fileCleanup } from '@/services/fileCleanup';
 import { splitAudioBySize, cleanupChunkFiles } from '@/services/audioProcessing';
@@ -51,6 +52,10 @@ export async function POST(
     // Check authentication and get user info
     const { error: authError, user } = await requireAuth();
     if (authError) return authError;
+
+    // Only the campaign owner may trigger (billable) transcription.
+    const access = await requireSessionAccess(sessionId, 'owner');
+    if (!access.ok) return access.response;
 
     // COST PROTECTION: Block test accounts from making real AI API calls.
     // Skipped when AI is mocked — no spend, so the pipeline can be tested.
@@ -382,9 +387,9 @@ export async function GET(
   const { sessionId } = await params;
 
   try {
-    // Check authentication
-    const { error } = await requireAuth();
-    if (error) return error;
+    // Any member of the session's campaign may read its transcriptions.
+    const access = await requireSessionAccess(sessionId, 'any');
+    if (!access.ok) return access.response;
 
     const transcriptions = await db.getTranscriptions(sessionId);
 
@@ -407,9 +412,9 @@ export async function DELETE(
   const { sessionId } = await params;
 
   try {
-    // Check authentication
-    const { error } = await requireAuth();
-    if (error) return error;
+    // Only the campaign owner may cancel transcription.
+    const access = await requireSessionAccess(sessionId, 'owner');
+    if (!access.ok) return access.response;
 
     // Check if session exists
     const session = await db.getSessionById(sessionId);

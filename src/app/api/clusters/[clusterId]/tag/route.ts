@@ -9,6 +9,7 @@ const tagSchema = z
   .object({
     voiceSampleId: z.string().min(1).optional(),
     name: z.string().trim().min(1).max(80).optional(),
+    useForTraining: z.boolean().optional(),
   })
   .refine((v) => !!v.voiceSampleId !== !!v.name, {
     message: 'Provide exactly one of voiceSampleId or name',
@@ -47,7 +48,13 @@ export async function POST(
     }
 
     if (parsed.data.voiceSampleId) {
-      await db.tagClusterWithExistingVoice(clusterId, parsed.data.voiceSampleId, cluster.sessionId);
+      const useForTraining = parsed.data.useForTraining ?? true;
+      await db.tagClusterWithExistingVoice(
+        clusterId,
+        parsed.data.voiceSampleId,
+        cluster.sessionId,
+        useForTraining,
+      );
       return NextResponse.json({ ok: true, affectedSessionIds: [cluster.sessionId] });
     }
 

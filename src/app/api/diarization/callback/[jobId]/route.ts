@@ -16,6 +16,7 @@ import {
 import { embeddingModelFor } from '@/lib/voiceEnrollment';
 import { generateClusterSnippet, SNIPPET_RETENTION_MS } from '@/services/diarization';
 import { logger } from '@/lib/logger';
+import { metrics, recordVoiceMatch, withHttpMetrics } from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,7 @@ interface ResolvedCluster {
  *   4. replace the session's transcriptions with speaker-attributed rows,
  *   5. mark the session for speaker-aware re-summarization.
  */
-export async function POST(
+async function postHandler(
   request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
@@ -78,6 +79,17 @@ export async function POST(
   const sessionId = job.sessionId;
   const campaignId = job.session.campaignId;
 
+  // Atomic claim closes the TOCTOU between the replay guard above and the
+  // destructive transcription replacement below: only one concurrent callback
+  // (e.g. a container retry) wins; the rest get 409. It stamps finishedAt
+  // without leaving `running`, so a crash mid-processing is still recoverable
+  // by the reconcile sweep. Done after payload validation so a bad payload
+  // doesn't strand the job as "claimed".
+  if (!(await db.claimDiarizationJobForCallback(jobId))) {
+    logger.warn('Diarization callback lost the claim race', { jobId });
+    return NextResponse.json({ error: 'Job already processed' }, { status: 409 });
+  }
+
   try {
     const fingerprints = await db.getCampaignFingerprints(campaignId);
     const config = getFingerprintConfig();
@@ -114,6 +126,7 @@ export async function POST(
       for (const cluster of clusters) {
         const centroid = deserializeEmbedding(cluster.embeddingCentroid);
         const match = matchCluster(centroid, fingerprints, config);
+        recordVoiceMatch(match.matchConfidence, match.matchedScore);
 
         let displayLabel: string;
         let voiceSampleId: string | null;
@@ -174,6 +187,7 @@ export async function POST(
             durationMs: cluster.totalDurationMs,
             maxExemplars: config.maxExemplars,
           });
+          metrics.voiceLearned.inc();
         }
       }
     } finally {
@@ -206,9 +220,11 @@ export async function POST(
       segments: rows.length,
     });
 
+    metrics.diarizationCallbacks.inc({ status: 'success' });
     return NextResponse.json({ ok: true, clusters: resolved.length, segments: rows.length });
   } catch (err) {
     logger.error('Failed to process diarization callback', err as Error, { jobId, sessionId });
+    metrics.diarizationCallbacks.inc({ status: 'error' });
     await db
       .updateDiarizationJob(jobId, {
         status: 'failed',
@@ -221,3 +237,5 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to process callback' }, { status: 500 });
   }
 }
+
+export const POST = withHttpMetrics('/api/diarization/callback/[jobId]', postHandler);

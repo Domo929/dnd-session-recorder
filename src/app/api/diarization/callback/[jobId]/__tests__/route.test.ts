@@ -57,6 +57,7 @@ beforeEach(() => {
     upsertSpeakerCluster: vi.fn(async (d: { clusterIdx: number }) => ({ id: `cl_${d.clusterIdx}` })),
     addLearnedExemplar: vi.fn(async () => {}),
     completeDiarizationJob: vi.fn(async () => {}),
+    claimDiarizationJobForCallback: vi.fn(async () => true),
     setSessionDiarizationStatus: vi.fn(async () => {}),
     updateDiarizationJob: vi.fn(async () => job),
   });
@@ -106,6 +107,16 @@ describe('POST /api/diarization/callback/[jobId]', () => {
 
   it('409 when the job is already finished (replay guard)', async () => {
     vi.mocked(db.getDiarizationJobById).mockResolvedValueOnce({ ...job, status: 'completed' } as never);
+    const body = payloadWith([matchedCluster], [{ startMs: 0, endMs: 1000, text: 'hi', clusterIdx: 0 }]);
+    const { req, ctx } = callbackRequest('job_1', body, sign(body));
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(409);
+    expect(db.upsertSpeakerCluster).not.toHaveBeenCalled();
+    expect(db.completeDiarizationJob).not.toHaveBeenCalled();
+  });
+
+  it('409 when a concurrent callback already claimed the job (TOCTOU guard)', async () => {
+    vi.mocked(db.claimDiarizationJobForCallback).mockResolvedValueOnce(false as never);
     const body = payloadWith([matchedCluster], [{ startMs: 0, endMs: 1000, text: 'hi', clusterIdx: 0 }]);
     const { req, ctx } = callbackRequest('job_1', body, sign(body));
     const res = await POST(req, ctx);

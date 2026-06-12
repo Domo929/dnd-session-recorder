@@ -2,13 +2,13 @@
 
 import { useState } from 'react';
 import { CheckCircle, Edit3, RefreshCw, Save } from 'lucide-react';
-import { marked } from 'marked';
+import { renderMarkdownToSafeHtml } from '@/lib/markdown';
 import type { DmTodoList } from '../types';
 
 interface DMTodoPanelProps {
   todoList: DmTodoList | null;
   sessionStatus: string;
-  onSave: (text: string) => void;
+  onSave: (text: string) => Promise<unknown> | void;
   onRegenerate: () => void;
   isSaving: boolean;
   isRegenerating: boolean;
@@ -41,8 +41,12 @@ export function DMTodoPanel({
   };
 
   const handleSave = async () => {
-    await onSave(editText);
-    setIsEditing(false);
+    try {
+      await onSave(editText);
+      setIsEditing(false);
+    } catch {
+      // Keep edit mode open so the user can retry; the mutation surfaces errors.
+    }
   };
 
   const handleCancel = () => {
@@ -342,7 +346,7 @@ export function DMTodoPanel({
               lineHeight: 1.65,
             }}
             dangerouslySetInnerHTML={{
-              __html: marked(todoList.content) as string,
+              __html: renderMarkdownToSafeHtml(todoList.content),
             }}
           />
         )}

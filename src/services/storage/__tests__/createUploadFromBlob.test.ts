@@ -57,11 +57,12 @@ describe('createUploadFromBlob', () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it('422 when the real size differs from the declared size', async () => {
-    mockStorage({ head: vi.fn(async () => ({ exists: true, size: 9999 })) });
+  it('422 and deletes the orphan blob when the real size differs from the declared size', async () => {
+    const { del } = mockStorage({ head: vi.fn(async () => ({ exists: true, size: 9999 })) });
     await expect(
       createUploadFromBlob(userId, { ...base, blobPath: ownedBlob, size: 2048 }),
     ).rejects.toMatchObject({ status: 422 });
+    expect(del).toHaveBeenCalledWith(ownedBlob);
   });
 
   it('422 and deletes the orphan blob when ffprobe fails', async () => {

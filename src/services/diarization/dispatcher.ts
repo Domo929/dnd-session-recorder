@@ -112,11 +112,6 @@ export async function dispatchQueuedJobs(deps: DispatcherDeps): Promise<void> {
         callbackUrl,
       });
 
-      await db.updateDiarizationJob(job.id, {
-        aciResourceId,
-        costEstimateUsd: config.estimatedCostUsd,
-      });
-
       running += 1;
       campaignRunning.set(campaignId, campaignRunning.get(campaignId)! + 1);
       dailySpendUsd += config.estimatedCostUsd;
@@ -156,9 +151,31 @@ async function launchInFirstAcceptingRegion(
         callbackUrl: urls.callbackUrl,
         hmacSecret: job.hmacSecret,
       });
-      // Persist region eagerly so cleanup can find the group even if the
-      // follow-up cost/resource update below were to fail.
-      await deps.db.updateDiarizationJob(job.id, { region, aciResourceId });
+      // Persist region/resource/cost eagerly so cleanup can find the group and
+      // billing is accounted for. If this persist fails the container is live
+      // but invisible to the DB (and to reconcileRunningJobs, which only sees
+      // jobs with a stored aciResourceId), so delete it before rethrowing to
+      // avoid leaking a billing GPU container.
+      try {
+        await deps.db.updateDiarizationJob(job.id, {
+          region,
+          aciResourceId,
+          costEstimateUsd: config.estimatedCostUsd,
+        });
+      } catch (persistErr) {
+        logger.error('Failed to persist dispatched container; deleting to avoid leak', persistErr as Error, {
+          jobId: job.id,
+          region,
+          aciResourceId,
+        });
+        await aci.delete(aciResourceId).catch((delErr) => {
+          logger.error('Failed to delete orphaned ACI group after persist failure', delErr as Error, {
+            jobId: job.id,
+            aciResourceId,
+          });
+        });
+        throw persistErr;
+      }
       return aciResourceId;
     } catch (err) {
       lastError = err;

@@ -82,6 +82,23 @@ OpenAI is used in exactly three API routes: `transcription/[sessionId]`, `summar
 ### The cost-protection block must be bypassed when AI is mocked
 Each AI route has a `isTestAccount(email)` check that returns **403** — it blocks `@test.com`/`@example.com` accounts from the AI pipeline entirely (real-spend protection). PR integration tests use exactly those test-domain accounts, so without a bypass they could never reach the pipeline. The fix: the block is now `if (isTestAccount(email) && !isAiMocked())`. Mocked = no spend = no reason to block. If you add a new AI route, replicate this guard.
 
+## Metrics / observability
+
+### `prom-client` metrics live in `src/lib/metrics.ts`, exposed at `GET /api/metrics`
+All Prometheus instrumentation goes through `src/lib/metrics.ts` (prefix `dndrec_`). The registry is stored on `globalThis.__appMetrics` (same singleton pattern as `prisma.ts`) so it survives HMR and multiple route bundles. Add new metrics there, not inline.
+
+### `/api/metrics` must run on the Node runtime and be bearer-guarded
+`prom-client` uses Node APIs, so the route sets `runtime = 'nodejs'` + `dynamic = 'force-dynamic'`. It returns **404 when `METRICS_TOKEN` is unset** and **401** without a matching `Authorization: Bearer <token>`. The route is whitelisted in `middleware.ts`'s authorized callback. Do NOT try to instrument in middleware — that's the edge runtime and prom-client won't load there.
+
+### HTTP metrics are opt-in per route via `withHttpMetrics`
+There's no global HTTP middleware metric (edge constraint). Wrap a handler: `export const POST = withHttpMetrics('route-label', postHandler)`. Currently applied to the diarization callback and the session-process route.
+
+### AI metrics are recorded in `src/lib/ai.ts` only
+`recordAiCall` (latency/tokens/cost) fires inside `transcribeAudio` and `generateAiText`. AI SDK v5 usage is read as `{inputTokens, outputTokens}` (typed loosely) with a char-based fallback. **Mock mode (`MOCK_AI_SERVICES=true`) is intentionally NOT recorded** — no spend, no metric. Cost is estimated from tokens × model pricing in `estimateTokenCostUsd`.
+
+### Voice-match accuracy uses proxy signals
+`recordVoiceMatch` (in the diarization callback) records match confidence (high/low/none) + matched score. There's no ground-truth error signal yet (a DM-override audit log would be the real one), so dashboards use confidence split + NPC-suggestion accept rate as proxies.
+
 ## Codebase surprises
 
 ### Pre-existing type errors in `page.tsx`

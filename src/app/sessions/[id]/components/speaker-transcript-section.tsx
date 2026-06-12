@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Tag, Check, X, Sparkles } from 'lucide-react';
+import { Play, Tag, Check, X, Sparkles, Users, RefreshCw, Upload as UploadIcon } from 'lucide-react';
 import { TranscriptSection } from './transcript-section';
+import { uploadFileToBlob } from '@/lib/uploadToBlob';
 import type { Transcription } from '../types';
 import {
   useSpeakerData,
@@ -16,6 +17,7 @@ interface Props {
   sessionId: string;
   transcriptions: Transcription[];
   sessionStatus: string;
+  campaignId: string;
 }
 
 function formatTime(seconds: number): string {
@@ -24,14 +26,159 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function SpeakerTranscriptSection({ sessionId, transcriptions, sessionStatus }: Props) {
+export function SpeakerTranscriptSection({ sessionId, transcriptions, sessionStatus, campaignId }: Props) {
   const { data } = useSpeakerData(sessionId);
 
-  // Fall back to the plain transcript until a speaker-labeled run completes.
+  // Fall back to the basic-mode transcript (with relabeling) until a
+  // speaker-labeled run completes. Owners additionally get the on-demand
+  // "identify speakers" bridge above the transcript.
   if (!hasSpeakerView(data)) {
-    return <TranscriptSection transcriptions={transcriptions} sessionStatus={sessionStatus} />;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {data?.canTag && <DiarizeBridge sessionId={sessionId} diarizationStatus={data.diarizationStatus} />}
+        <TranscriptSection
+          transcriptions={transcriptions}
+          sessionStatus={sessionStatus}
+          sessionId={sessionId}
+          campaignId={campaignId}
+        />
+      </div>
+    );
   }
   return <SpeakerView sessionId={sessionId} data={data!} />;
+}
+
+/**
+ * Owner-only control to start (or retry) diarization on a basic-mode session,
+ * with a re-upload affordance for when the recording's audio has been purged by
+ * the retention cron.
+ */
+function DiarizeBridge({
+  sessionId,
+  diarizationStatus,
+}: {
+  sessionId: string;
+  diarizationStatus: string;
+}) {
+  const queryClient = useQueryClient();
+  const [needsReupload, setNeedsReupload] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['speakers', sessionId] });
+    queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
+  };
+
+  const diarize = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/sessions/${sessionId}/diarize`, { method: 'POST' });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Failed to start diarization');
+      return j;
+    },
+    onSuccess: () => {
+      setNeedsReupload(false);
+      invalidate();
+    },
+    onError: (e: Error) => {
+      // The most common failure is purged audio — offer a re-upload path.
+      if (/no longer available|re-upload/i.test(e.message)) setNeedsReupload(true);
+    },
+  });
+
+  const reupload = useMutation({
+    mutationFn: async (file: File) => {
+      const blob = await uploadFileToBlob(file, (f) => setProgress(f));
+      const res = await fetch(`/api/sessions/${sessionId}/reupload-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(blob),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Failed to re-upload audio');
+      return j;
+    },
+    onSuccess: () => {
+      setProgress(null);
+      setNeedsReupload(false);
+      diarize.mutate();
+    },
+    onError: () => setProgress(null),
+  });
+
+  const inProgress = diarizationStatus === 'queued' || diarizationStatus === 'running';
+
+  return (
+    <div
+      style={{
+        background: 'var(--sp-primary-tint)',
+        border: '1px solid var(--sp-border)',
+        borderRadius: 6,
+        padding: '12px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Users className="w-4 h-4" style={{ color: 'var(--sp-primary)' }} />
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--sp-fg-1)' }}>
+          Identify speakers
+        </span>
+        {inProgress ? (
+          <span style={{ fontSize: 12, color: 'var(--sp-fg-3)' }}>
+            Diarization in progress…
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--sp-fg-3)' }}>
+            Run voice diarization to attribute each line to a speaker.
+            {diarizationStatus === 'failed' && ' The last run failed — you can retry.'}
+          </span>
+        )}
+        {!inProgress && !needsReupload && (
+          <button
+            type="button"
+            onClick={() => diarize.mutate()}
+            disabled={diarize.isPending}
+            style={tagBtnStyle}
+          >
+            {diarizationStatus === 'failed' ? 'Retry diarization' : 'Identify speakers'}
+          </button>
+        )}
+      </div>
+
+      {needsReupload && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--sp-fg-2)' }}>
+            This session&apos;s audio has been purged. Re-upload the original recording to diarize:
+          </span>
+          <label style={{ ...tagBtnStyle, cursor: reupload.isPending ? 'default' : 'pointer' }}>
+            <UploadIcon className="w-3 h-3" />
+            {reupload.isPending
+              ? `Uploading${progress != null ? ` ${Math.round(progress * 100)}%` : ''}…`
+              : 'Choose audio file'}
+            <input
+              type="file"
+              accept="audio/*"
+              disabled={reupload.isPending}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) reupload.mutate(file);
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
+      )}
+
+      {diarize.isError && !needsReupload && (
+        <span style={{ fontSize: 11, color: 'var(--sp-danger, #b91c1c)' }}>{diarize.error.message}</span>
+      )}
+      {reupload.isError && (
+        <span style={{ fontSize: 11, color: 'var(--sp-danger, #b91c1c)' }}>{reupload.error.message}</span>
+      )}
+    </div>
+  );
 }
 
 function SpeakerView({ sessionId, data }: { sessionId: string; data: SpeakerData }) {
@@ -50,9 +197,14 @@ function SpeakerView({ sessionId, data }: { sessionId: string; data: SpeakerData
   const pendingSuggestions = data.clusters.filter(
     (c) => c.npcSuggestion && c.npcSuggestion.status === 'pending',
   );
+  const hasUnknownClusters = data.clusters.some((c) => !c.voiceSampleId);
 
   return (
     <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {data.canTag && hasUnknownClusters && (
+        <RematchControl sessionId={sessionId} onMatched={invalidate} />
+      )}
+
       {data.canTag && pendingSuggestions.length > 0 && (
         <NpcSuggestionsPanel suggestions={pendingSuggestions} onResolved={invalidate} />
       )}
@@ -103,6 +255,37 @@ function SpeakerView({ sessionId, data }: { sessionId: string; data: SpeakerData
   );
 }
 
+function RematchControl({ sessionId, onMatched }: { sessionId: string; onMatched: () => void }) {
+  const [result, setResult] = useState<string | null>(null);
+
+  const rematch = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/sessions/${sessionId}/rematch`, { method: 'POST' });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Failed to re-run matching');
+      return j as { linked: unknown[] };
+    },
+    onSuccess: (j) => {
+      const n = j.linked.length;
+      setResult(n === 0 ? 'No new matches found.' : `Matched ${n} more speaker${n === 1 ? '' : 's'}.`);
+      if (n > 0) onMatched();
+    },
+    onError: (e: Error) => setResult(e.message),
+  });
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <button type="button" onClick={() => rematch.mutate()} disabled={rematch.isPending} style={tagBtnStyle}>
+        <RefreshCw className="w-3 h-3" /> {rematch.isPending ? 'Matching…' : 'Re-run matching'}
+      </button>
+      <span style={{ fontSize: 12, color: 'var(--sp-fg-3)' }}>
+        Apply the voices you&apos;ve tagged to the remaining unknown speakers.
+      </span>
+      {result && <span style={{ fontSize: 12, color: 'var(--sp-fg-2)' }}>{result}</span>}
+    </div>
+  );
+}
+
 function TagControls({
   cluster,
   voiceOptions,
@@ -114,10 +297,11 @@ function TagControls({
 }) {
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [useForTraining, setUseForTraining] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const tag = useMutation({
-    mutationFn: async (body: { voiceSampleId?: string; name?: string }) => {
+    mutationFn: async (body: { voiceSampleId?: string; name?: string; useForTraining?: boolean }) => {
       const res = await fetch(`/api/clusters/${cluster.id}/tag`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -139,7 +323,7 @@ function TagControls({
   });
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {cluster.snippetAvailable && (
         <button
           type="button"
@@ -158,7 +342,7 @@ function TagControls({
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
           <select
             defaultValue=""
-            onChange={(e) => e.target.value && tag.mutate({ voiceSampleId: e.target.value })}
+            onChange={(e) => e.target.value && tag.mutate({ voiceSampleId: e.target.value, useForTraining })}
             disabled={tag.isPending}
             style={selectStyle}
           >
@@ -180,12 +364,24 @@ function TagControls({
           />
           <button
             type="button"
-            onClick={() => newName.trim() && tag.mutate({ name: newName.trim() })}
+            onClick={() => newName.trim() && tag.mutate({ name: newName.trim(), useForTraining })}
             disabled={tag.isPending || !newName.trim()}
             style={tagBtnStyle}
           >
             Save
           </button>
+          <label
+            title="Fold this clip into the matched voice so future sessions recognize it. Turn off for a noisy or very short clip."
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--sp-fg-3)' }}
+          >
+            <input
+              type="checkbox"
+              checked={useForTraining}
+              onChange={(e) => setUseForTraining(e.target.checked)}
+              disabled={tag.isPending}
+            />
+            Use for training
+          </label>
           <button type="button" onClick={() => setOpen(false)} style={iconBtnStyle}>
             <X className="w-3 h-3" />
           </button>

@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const DEFAULT_AUDIO_RETENTION_DAYS = 14;
+export const DEFAULT_AUDIO_RETENTION_DAYS = 28;
 export const DEFAULT_SNIPPET_RETENTION_DAYS = 30;
 
 export interface RetentionConfig {
@@ -17,7 +17,7 @@ function parsePositiveDays(raw: string | undefined, fallback: number): number {
 
 /**
  * Resolve the configured retention windows (days → ms). Falls back to the
- * design defaults (14d audio / 30d unknown-snippet) when unset or invalid.
+ * design defaults (28d audio / 30d unknown-snippet) when unset or invalid.
  */
 export function getRetentionConfig(env: NodeJS.ProcessEnv = process.env): RetentionConfig {
   return {

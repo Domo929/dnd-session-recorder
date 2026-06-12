@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma';
 import { Prisma, Campaign, GamingSession, Transcription, Summary, Upload, UploadStorage, VoiceSample, VoiceSampleSource, TranscriptionMode, DiarizationJob, DiarizationStatus, VoiceExemplarSource, SessionSpeakerCluster, SessionNpcSuggestion } from '@prisma/client';
-import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, selectExemplarsToEvict, type VoiceFingerprint } from '@/lib/voiceFingerprint';
+import { cosineSimilarity, deserializeEmbedding, getFingerprintConfig, matchCluster, selectExemplarsToEvict, shouldLearn, type VoiceFingerprint } from '@/lib/voiceFingerprint';
 import { getRetentionConfig } from '@/lib/retention';
 
 export interface CreateCampaignData {
@@ -362,7 +362,13 @@ export class DatabaseService {
       await tx.transcription.deleteMany({
         where: { sessionId },
       });
-      
+
+      // A fresh transcript invalidates basic-mode turn indices, so drop any
+      // per-turn relabels (per-speaker-key defaults are keyed by label, but we
+      // clear them too for a clean slate on re-transcription).
+      await tx.sessionSpeakerTurn.deleteMany({ where: { sessionId } });
+      await tx.sessionSpeakerDefault.deleteMany({ where: { sessionId } });
+
       // Insert new transcriptions
       await tx.transcription.createMany({
         data: segments.map((segment) => ({
@@ -382,7 +388,11 @@ export class DatabaseService {
       await tx.transcription.deleteMany({
         where: { sessionId },
       });
-      
+
+      // A fresh transcript invalidates basic-mode turn indices (see above).
+      await tx.sessionSpeakerTurn.deleteMany({ where: { sessionId } });
+      await tx.sessionSpeakerDefault.deleteMany({ where: { sessionId } });
+
       // Insert single transcription record with dummy timestamps
       await tx.transcription.create({
         data: {
@@ -746,6 +756,27 @@ export class DatabaseService {
     return job;
   }
 
+  /**
+   * On-demand diarization for a basic-mode session: flip it to speaker-labeled
+   * and queue a job in one transaction. Unlike the post-transcription auto path
+   * (`maybeEnqueueDiarization`) this does not require enrolled voices — an
+   * all-unknown result is still useful (the DM can tag clusters to seed the
+   * voice library). The status flip is conditional (claim-on-update) so two
+   * racing requests can't both enqueue a (billed) job; returns null when a run
+   * is already queued/running.
+   */
+  async createOnDemandDiarizationJob(sessionId: string): Promise<DiarizationJob | null> {
+    const hmacSecret = randomBytes(32).toString('hex');
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.gamingSession.updateMany({
+        where: { id: sessionId, diarizationStatus: { notIn: ['queued', 'running'] } },
+        data: { transcriptionMode: 'speaker_labeled', diarizationStatus: 'queued' },
+      });
+      if (claimed.count === 0) return null;
+      return tx.diarizationJob.create({ data: { sessionId, status: 'queued', hmacSecret } });
+    });
+  }
+
   async getDiarizationJobById(
     jobId: string,
   ): Promise<(DiarizationJob & { session: GamingSession }) | null> {
@@ -845,6 +876,27 @@ export class DatabaseService {
     return count > 0;
   }
 
+  /**
+   * Atomically claim a `running` job for callback processing by stamping
+   * `finishedAt` while it is still NULL (keeping status `running`). Returns true
+   * iff this caller won. Closes the TOCTOU between the callback's replay guard
+   * and the destructive transcription replacement: only the winner performs the
+   * work, concurrent replays see `finishedAt` already set and get a count of 0
+   * (and must return 409).
+   *
+   * Crucially this does NOT move the job to a terminal status, so if the handler
+   * dies mid-processing (crash/restart) the job stays `running` and the
+   * reconcile sweep can still recover it. The final completeDiarizationJob flips
+   * it to `completed`; on a thrown error the catch reverts it to `failed`.
+   */
+  async claimDiarizationJobForCallback(jobId: string): Promise<boolean> {
+    const { count } = await prisma.diarizationJob.updateMany({
+      where: { id: jobId, status: 'running', finishedAt: null },
+      data: { finishedAt: new Date() },
+    });
+    return count > 0;
+  }
+
   /** Running jobs that have an ACI resource (cleanup-loop candidates). */
   async listRunningDiarizationJobsWithAci(): Promise<DiarizationJob[]> {
     return prisma.diarizationJob.findMany({
@@ -860,7 +912,7 @@ export class DatabaseService {
     await prisma.$transaction(async (tx) => {
       const job = await tx.diarizationJob.update({
         where: { id: jobId },
-        data: { status: 'queued', aciResourceId: null, region: null, startedAt: null },
+        data: { status: 'queued', aciResourceId: null, region: null, startedAt: null, finishedAt: null },
       });
       await tx.gamingSession.update({
         where: { id: job.sessionId },
@@ -1153,6 +1205,7 @@ export class DatabaseService {
     clusterId: string,
     voiceSampleId: string,
     sessionId: string,
+    useForTraining: boolean = true,
   ): Promise<void> {
     const voice = await prisma.voiceSample.findUnique({
       where: { id: voiceSampleId },
@@ -1173,16 +1226,21 @@ export class DatabaseService {
       });
       if (claimed.count === 0) throw new ClusterAlreadyTaggedError(clusterId);
 
-      await this.addLearnedExemplarTx(tx, {
-        voiceSampleId,
-        embedding: Buffer.from(cluster.embeddingCentroid),
-        embeddingModel: 'ecapa-tdnn-v1',
-        source: 'dm_confirmed',
-        sourceSessionId: sessionId,
-        similarityAtCapture: cluster.matchedScore,
-        durationMs: cluster.totalDurationMs,
-        maxExemplars: getFingerprintConfig().maxExemplars,
-      });
+      // The DM-confirmed exemplar refines the voice fingerprint. Skipping it
+      // (useForTraining=false) still labels the cluster but keeps a noisy/short
+      // snippet out of the fingerprint.
+      if (useForTraining) {
+        await this.addLearnedExemplarTx(tx, {
+          voiceSampleId,
+          embedding: Buffer.from(cluster.embeddingCentroid),
+          embeddingModel: 'ecapa-tdnn-v1',
+          source: 'dm_confirmed',
+          sourceSessionId: sessionId,
+          similarityAtCapture: cluster.matchedScore,
+          durationMs: cluster.totalDurationMs,
+          maxExemplars: getFingerprintConfig().maxExemplars,
+        });
+      }
       await tx.gamingSession.update({
         where: { id: sessionId },
         data: { needsResummarize: true },
@@ -1273,6 +1331,90 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Re-run voice matching for this session's still-unknown clusters against the
+   * campaign's current fingerprints (seed + learned exemplars). High-confidence
+   * matches are auto-linked (claim-on-update so a concurrent tag can't be
+   * clobbered) and, when the match clears the learn gate, folded back as an
+   * `auto_matched` exemplar. Affected sessions are flagged for re-summarization.
+   * Idempotent: already-linked clusters are skipped and exemplar writes upsert
+   * on `[voiceSampleId, sourceSessionId]`. Returns the linked clusters.
+   */
+  async rematchSessionClusters(
+    sessionId: string,
+    campaignId: string,
+  ): Promise<{ linked: { clusterId: string; displayLabel: string; matchedScore: number }[] }> {
+    const fingerprints = await this.getCampaignFingerprints(campaignId);
+    const linked: { clusterId: string; displayLabel: string; matchedScore: number }[] = [];
+    if (fingerprints.length === 0) return { linked };
+
+    const config = getFingerprintConfig();
+    const clusters = await prisma.sessionSpeakerCluster.findMany({
+      where: { sessionId, voiceSampleId: null },
+      select: { id: true, embeddingCentroid: true, totalDurationMs: true },
+    });
+
+    for (const cluster of clusters) {
+      const centroid = deserializeEmbedding(Buffer.from(cluster.embeddingCentroid));
+      const match = matchCluster(centroid, fingerprints, config);
+      // Only auto-link confident matches; low-confidence stays unknown for review.
+      if (match.kind !== 'matched' || match.matchConfidence !== 'high') continue;
+
+      await prisma.$transaction(async (tx) => {
+        const claimed = await tx.sessionSpeakerCluster.updateMany({
+          where: { id: cluster.id, voiceSampleId: null },
+          data: {
+            voiceSampleId: match.voiceSampleId,
+            displayLabel: match.displayLabel,
+            matchConfidence: 'high',
+            matchedScore: match.matchedScore,
+          },
+        });
+        if (claimed.count === 0) return; // lost a concurrent tag race; skip.
+
+        if (shouldLearn(match, false, config)) {
+          // Don't let an auto-match downgrade a DM-confirmed exemplar already
+          // captured for this voice in this session (exemplars are unique on
+          // [voiceSampleId, sourceSessionId]).
+          const existing = await tx.voiceExemplar.findUnique({
+            where: {
+              voiceSampleId_sourceSessionId: {
+                voiceSampleId: match.voiceSampleId,
+                sourceSessionId: sessionId,
+              },
+            },
+            select: { source: true },
+          });
+          if (existing?.source !== 'dm_confirmed') {
+            await this.addLearnedExemplarTx(tx, {
+              voiceSampleId: match.voiceSampleId,
+              embedding: Buffer.from(cluster.embeddingCentroid),
+              embeddingModel: 'ecapa-tdnn-v1',
+              source: 'auto_matched',
+              sourceSessionId: sessionId,
+              similarityAtCapture: match.matchedScore,
+              durationMs: cluster.totalDurationMs,
+              maxExemplars: config.maxExemplars,
+            });
+          }
+        }
+        linked.push({
+          clusterId: cluster.id,
+          displayLabel: match.displayLabel,
+          matchedScore: match.matchedScore,
+        });
+      });
+    }
+
+    if (linked.length > 0) {
+      await prisma.gamingSession.update({
+        where: { id: sessionId },
+        data: { needsResummarize: true },
+      });
+    }
+    return { linked };
+  }
+
   /** Insert NPC suggestions, skipping clusters that already have one. */
   async createNpcSuggestions(
     sessionId: string,
@@ -1323,6 +1465,135 @@ export class DatabaseService {
       where: { id: sessionId },
       data: { needsResummarize: false },
     });
+  }
+
+  // ── Basic-mode speaker relabeling (Track A) ───────────────────────────────
+
+  /** Per-speaker-key defaults and per-turn overrides for a basic-mode session. */
+  async getSpeakerLabels(sessionId: string): Promise<{
+    defaults: { speakerKey: string; name: string }[];
+    turns: { turnIndex: number; name: string }[];
+  }> {
+    const [defaults, turns] = await Promise.all([
+      prisma.sessionSpeakerDefault.findMany({
+        where: { sessionId },
+        select: { speakerKey: true, name: true },
+        orderBy: { speakerKey: 'asc' },
+      }),
+      prisma.sessionSpeakerTurn.findMany({
+        where: { sessionId },
+        select: { turnIndex: true, name: true },
+        orderBy: { turnIndex: 'asc' },
+      }),
+    ]);
+    return { defaults, turns };
+  }
+
+  /**
+   * Upsert per-speaker-key defaults and/or per-turn overrides for a session.
+   * A blank/empty name clears that entry. Names are stored verbatim (already
+   * canonicalized by the caller) plus a normalized form for registry queries.
+   * Flags the session for re-summarization whenever anything changed.
+   */
+  async upsertSpeakerLabels(
+    sessionId: string,
+    campaignId: string,
+    input: {
+      defaults?: { speakerKey: string; name: string }[];
+      turns?: { turnIndex: number; name: string }[];
+    },
+    normalize: (name: string) => string,
+  ): Promise<void> {
+    const defaults = input.defaults ?? [];
+    const turns = input.turns ?? [];
+    if (defaults.length === 0 && turns.length === 0) return;
+
+    await prisma.$transaction(async (tx) => {
+      for (const d of defaults) {
+        const name = d.name.trim();
+        if (!name) {
+          await tx.sessionSpeakerDefault.deleteMany({
+            where: { sessionId, speakerKey: d.speakerKey },
+          });
+          continue;
+        }
+        await tx.sessionSpeakerDefault.upsert({
+          where: { sessionId_speakerKey: { sessionId, speakerKey: d.speakerKey } },
+          create: { sessionId, campaignId, speakerKey: d.speakerKey, name, normalizedName: normalize(name) },
+          update: { name, normalizedName: normalize(name) },
+        });
+      }
+      for (const t of turns) {
+        const name = t.name.trim();
+        if (!name) {
+          await tx.sessionSpeakerTurn.deleteMany({
+            where: { sessionId, turnIndex: t.turnIndex },
+          });
+          continue;
+        }
+        await tx.sessionSpeakerTurn.upsert({
+          where: { sessionId_turnIndex: { sessionId, turnIndex: t.turnIndex } },
+          create: { sessionId, campaignId, turnIndex: t.turnIndex, name, normalizedName: normalize(name) },
+          update: { name, normalizedName: normalize(name) },
+        });
+      }
+      await tx.gamingSession.update({
+        where: { id: sessionId },
+        data: { needsResummarize: true },
+      });
+    });
+  }
+
+  /**
+   * The virtual campaign speaker registry: a deduplicated, casing-canonical
+   * union of names usable as autocomplete suggestions for relabeling —
+   * enrolled voice labels, campaign member display names, accepted NPC
+   * suggestions, and names already used in this campaign's relabels. Returned
+   * in a stable order (voices, members, NPCs, relabels) so fuzzy-match ties
+   * resolve to the most authoritative source.
+   */
+  async getCampaignSpeakerRegistry(campaignId: string): Promise<string[]> {
+    const [voices, members, npcs, defaults, turns] = await Promise.all([
+      prisma.voiceSample.findMany({
+        where: { member: { campaignId } },
+        select: { label: true },
+      }),
+      prisma.member.findMany({
+        where: { campaignId },
+        select: { user: { select: { name: true } } },
+      }),
+      prisma.sessionNpcSuggestion.findMany({
+        where: { session: { campaignId }, status: 'accepted' },
+        select: { suggestedName: true },
+      }),
+      prisma.sessionSpeakerDefault.findMany({
+        where: { campaignId },
+        select: { name: true },
+      }),
+      prisma.sessionSpeakerTurn.findMany({
+        where: { campaignId },
+        select: { name: true },
+      }),
+    ]);
+
+    const ordered = [
+      ...voices.map((v) => v.label),
+      ...members.map((m) => m.user.name).filter((n): n is string => !!n),
+      ...npcs.map((n) => n.suggestedName),
+      ...defaults.map((d) => d.name),
+      ...turns.map((t) => t.name),
+    ];
+
+    // Dedupe case-insensitively, keeping the first (most authoritative) casing.
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of ordered) {
+      const key = name.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name.trim());
+    }
+    return out;
   }
 
   // ── Retention (speaker-labels cron) ───────────────────────────────────────
