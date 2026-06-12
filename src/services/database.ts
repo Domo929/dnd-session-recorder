@@ -601,6 +601,19 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Start the audio-retention clock on an upload: keep the original recording
+   * for the retention window (default 28 days) so the on-demand "Identify
+   * speakers" diarization can still use it, then let the audio-retention cron
+   * purge it. Replaces the old "delete immediately after transcription" path.
+   */
+  async scheduleAudioExpiry(uploadId: string): Promise<void> {
+    await prisma.upload.update({
+      where: { id: uploadId },
+      data: { audioExpiresAt: new Date(Date.now() + getRetentionConfig().audioRetentionMs) },
+    });
+  }
+
   async getUploadUsage(id: string): Promise<{ sessionCount: number; sessions: GamingSession[] }> {
     const sessions = await prisma.gamingSession.findMany({
       where: { uploadId: id },

@@ -190,7 +190,7 @@ model GamingSession {
 
   user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   campaign        Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  upload          Upload?                 @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  upload          Upload?                 @relation(fields: [uploadId], references: [id], onDelete: SetNull)
   summary         Summary?
   dmTodoList      DmTodoList?
   transcriptions  Transcription[]

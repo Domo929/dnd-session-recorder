@@ -111,8 +111,21 @@ export function useSessionData({ sessionId }: UseSessionDataProps) {
       return response.json();
     },
     enabled: !!sessionId,
-    refetchInterval: () => {
+    refetchInterval: (query) => {
       if (session?.status === 'transcribing') return 2000;
+      // The transcript is saved to the DB at the instant the session flips out of
+      // 'transcribing', so the last in-flight poll usually returns []. Keep
+      // polling through the post-transcription transition until the rows actually
+      // arrive — otherwise they don't show until the page is remounted.
+      const hasRows = (query.state.data?.length ?? 0) > 0;
+      if (
+        !hasRows &&
+        (session?.status === 'transcribed' ||
+          session?.status === 'summarizing' ||
+          session?.status === 'completed')
+      ) {
+        return 2000;
+      }
       return false;
     },
   });
