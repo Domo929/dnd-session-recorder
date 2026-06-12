@@ -33,6 +33,22 @@ function triggerPipelineStep(
   })
     .then(async (res) => {
       if (res.ok) return;
+
+      // A gateway/idle-timeout (502/503/504) means the proxy gave up waiting, not
+      // that the work failed — the child handler is still running (full
+      // transcription can far exceed the front-end's request timeout) and will
+      // finish or mark its own error. Treating it as a failure here flashes a
+      // spurious "request failed with status 504" before the run completes, so
+      // we leave the in-progress state untouched for these statuses.
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        logger.warn('Pipeline step hit a gateway timeout; child still running', {
+          sessionId,
+          step,
+          status: res.status,
+        });
+        return;
+      }
+
       let detail = '';
       try {
         detail = (await res.text()).slice(0, 500);

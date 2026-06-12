@@ -39,6 +39,7 @@ import { requireSessionAccess } from '@/lib/permissions';
 import { withMaterializedAudio } from '@/services/storage/materialize';
 import { splitAudioBySize } from '@/services/audioProcessing';
 import { transcribeWithBackoff } from '@/lib/ai';
+import { fileCleanup } from '@/services/fileCleanup';
 import { POST } from '../route';
 
 const session = {
@@ -92,6 +93,7 @@ beforeEach(() => {
     updateSession: vi.fn(async () => {}),
     updateTranscriptionProgress: vi.fn(async () => {}),
     updateUploadStatus: vi.fn(async () => {}),
+    scheduleAudioExpiry: vi.fn(async () => {}),
     saveTranscription: vi.fn(async () => {}),
     setSessionError: vi.fn(async () => {}),
     getTranscriptionChunkCount: vi.fn(async () => null),
@@ -138,6 +140,12 @@ describe('POST /api/transcription/[sessionId] — resumable transcription', () =
     // Stitched + chunk rows cleared on success.
     expect(db.saveTranscription).toHaveBeenCalledWith('sess_1', 'X X X');
     expect(db.setTranscriptionChunkCount).toHaveBeenLastCalledWith('sess_1', null);
+
+    // Audio is retained (retention clock started), not deleted, so the on-demand
+    // "Identify speakers" diarization can still use it.
+    expect(db.updateUploadStatus).toHaveBeenCalledWith('upl_1', 'transcribed', expect.anything());
+    expect(db.scheduleAudioExpiry).toHaveBeenCalledWith('upl_1');
+    expect(fileCleanup.cleanupSessionFiles).not.toHaveBeenCalled();
   });
 
   it('resumes: skips persisted chunks and only transcribes the missing one', async () => {

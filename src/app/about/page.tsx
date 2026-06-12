@@ -79,7 +79,7 @@ export default function AboutPage() {
           <div>
             <h3 className="text-lg font-semibold mb-2">What happens to my audio files?</h3>
             <p className="text-gray-700">
-              Once the transcription is done, the audio file is deleted. If the automatic deletion fails, you can manually delete the file from your uploads page.
+              After transcription, the audio recording is kept for about 28 days so you can run speaker identification on it, then it is automatically deleted. You can also delete it sooner at any time from your uploads page.
             </p>
           </div>
 

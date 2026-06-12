@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth-utils';
 import { requireSessionAccess } from '@/lib/permissions';
 import { db } from '@/services/database';
-import { fileCleanup } from '@/services/fileCleanup';
 import { splitAudioBySize, cleanupChunkFiles } from '@/services/audioProcessing';
 import { transcribeWithBackoff, createTranscriptionPacer, transcriptionMinIntervalMs, isAiMocked, maxTranscriptionChunkSizeMB } from '@/lib/ai';
 import { getStorageService } from '@/services/storage';
@@ -332,17 +331,21 @@ export async function POST(
     // Update upload status to transcribed if session has an upload
     if (session.uploadId) {
       await db.updateUploadStatus(session.uploadId, 'transcribed', chunkPaths);
-    }
 
-    // Clean up files after transcription is complete
-    try {
-      await fileCleanup.cleanupSessionFiles(sessionId);
-    } catch (cleanupError) {
-      logger.warn('File cleanup failed', {
-        sessionId,
-        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-      });
-      // Don't fail the transcription if cleanup fails
+      // Keep the original recording for the retention window instead of deleting
+      // it now: the on-demand "Identify speakers" (diarization) step needs the
+      // audio, and the audio-retention cron purges it once the window elapses.
+      // Failing toward retention (audio kept) is safer than toward deletion, so
+      // a failure here is logged but never fails the transcription.
+      try {
+        await db.scheduleAudioExpiry(session.uploadId);
+      } catch (retentionError) {
+        logger.warn('Failed to schedule audio retention expiry', {
+          sessionId,
+          uploadId: session.uploadId,
+          error: retentionError instanceof Error ? retentionError.message : String(retentionError),
+        });
+      }
     }
 
     logger.info('Transcription completed', { sessionId });
